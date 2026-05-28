@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
+
 from app.config import Settings
-from app.domain.quality import MediaType, parse_quality
+from app.domain.quality import MediaType, clean_display_title, parse_quality
 
 
 DEFAULT_ALLOWED_SAVE_PATHS = (
@@ -30,7 +32,10 @@ def default_save_path_for_title(
     title: str,
 ) -> str:
     if media_type == "tv":
-        return getattr(settings, "qbitlarr_save_path_tv", DEFAULT_ALLOWED_SAVE_PATHS[2])
+        return _join_path(
+            getattr(settings, "qbitlarr_save_path_tv", DEFAULT_ALLOWED_SAVE_PATHS[2]),
+            _tv_show_folder_name(title),
+        )
     if parse_quality(title).resolution == "2160p":
         return getattr(settings, "qbitlarr_save_path_movie_4k", DEFAULT_ALLOWED_SAVE_PATHS[1])
     return getattr(settings, "qbitlarr_save_path_movie", DEFAULT_ALLOWED_SAVE_PATHS[0])
@@ -59,3 +64,35 @@ def _is_same_or_child(path: str, root: str) -> bool:
     if path == root:
         return True
     return path.startswith(f"{root}/")
+
+
+_TV_SHOW_MARKER_RE = re.compile(
+    r"\b(S\d{1,2}(?:E\d{1,3})?|Season\s+\d{1,2}|Complete\s+Season)\b.*$",
+    re.IGNORECASE,
+)
+
+
+def _tv_show_folder_name(title: str) -> str | None:
+    display_title = clean_display_title(title)
+    marker = _TV_SHOW_MARKER_RE.search(display_title)
+    if marker:
+        display_title = display_title[: marker.start()]
+
+    folder_name = _sanitize_folder_name(display_title)
+    return folder_name or None
+
+
+def _sanitize_folder_name(name: str) -> str:
+    sanitized = name.replace("/", " ").replace("\\", " ")
+    sanitized = re.sub(r"\s+", " ", sanitized)
+    return sanitized.strip(" ._-")
+
+
+def _join_path(base_path: str, child_name: str | None) -> str:
+    base = _normalize_path(base_path)
+    child = _sanitize_folder_name(child_name or "")
+    if not child:
+        return base
+    if base == "/":
+        return f"/{child}"
+    return f"{base}/{child}"

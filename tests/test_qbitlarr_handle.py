@@ -381,7 +381,7 @@ def test_handle_imdb_id_auto_downloads_tv_to_tv_path(monkeypatch, tmp_path):
     assert response.json()["action"] == "auto_download"
     assert queued == {
         "download_link": "https://example.test/tv.torrent",
-        "save_path": "/downloads/tv",
+        "save_path": "/downloads/tv/Example Show",
     }
 
 

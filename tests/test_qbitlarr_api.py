@@ -383,7 +383,38 @@ def test_download_endpoint_infers_tv_save_path_when_save_path_is_omitted(monkeyp
     )
 
     assert response.status_code == 200
-    assert queued["save_path"] == "/downloads/tv"
+    assert queued["save_path"] == "/downloads/tv/Example Show"
+
+
+def test_download_endpoint_sanitizes_inferred_tv_show_folder(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "Example/Show S01E01 1080p WEB-DL H264"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "magnet:?xt=urn:btih:abcdef"},
+    )
+
+    assert response.status_code == 200
+    assert queued["save_path"] == "/downloads/tv/Example Show"
 
 
 def test_download_title_from_link_reads_magnet_display_name():

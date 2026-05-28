@@ -338,6 +338,8 @@ curl http://localhost:8000/prowlarr/indexers
 - `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`
 - `QBITLARR_SAVE_PATH_TV=/downloads/tv`
 
+TV downloads create a show folder under the TV base path, for example `/downloads/tv/Example Show`.
+
 Both `/handle` and `/download` also accept an optional `save_path` field for one-off overrides. Overrides must be inside one of the configured roots above or inside a comma-separated `QBITLARR_EXTRA_SAVE_PATHS` entry, such as `/media/Kids`.
 
 When `save_path` is omitted, `/handle` and `/download` use qBitlarr's configured defaults. `/download` infers the target from the torrent metadata or magnet display name, so manual selections from search results still land in the movie, 4K movie, or TV path instead of qBittorrent's global default download folder.
