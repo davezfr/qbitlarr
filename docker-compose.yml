@@ -1,6 +1,6 @@
 services:
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
+    image: lscr.io/linuxserver/prowlarr:2.3.5.5327-ls147
     container_name: qbitlarr-prowlarr
     restart: unless-stopped
     depends_on:
@@ -15,7 +15,7 @@ services:
       - "9696:9696"
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
     container_name: qbitlarr-flaresolverr
     restart: unless-stopped
     environment:

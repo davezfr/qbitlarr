@@ -264,11 +264,14 @@ async def _handle_imdb_request(
         require_min_seeders=False,
         preferences=preferences,
     )
+    snapshot_status = "primary_ready" if primary_ranked else "primary_empty"
+    results_for_manual_fallback = primary_results
+    fallback_searched = False
 
     store.create(
         query_id=query_id,
         request=_snapshot_request_payload(user_message=user_message, search_request=base_request, settings=settings),
-        status="primary_ready" if primary_ranked else "primary_empty",
+        status=snapshot_status,
         reason="primary_results_ready" if primary_ranked else "primary_no_results",
         results=primary_ranked,
     )
@@ -309,6 +312,8 @@ async def _handle_imdb_request(
             requested_resolution=requested_resolution,
             require_min_seeders=False,
         )
+        fallback_searched = True
+        results_for_manual_fallback = fallback_results
         selected = await _select_best_verified_result(
             fallback_results,
             settings,
@@ -329,7 +334,7 @@ async def _handle_imdb_request(
             media_type,
         )
         return _manual_results_response(
-            fallback_results if "fallback_results" in locals() else primary_results,
+            results_for_manual_fallback,
             status="not_found",
             message=AUTO_FALLBACK_MESSAGE,
             media_type=media_type,
@@ -340,7 +345,7 @@ async def _handle_imdb_request(
             preferences=preferences,
         )
 
-    if "snapshot_status" not in locals():
+    if not fallback_searched:
         snapshot_status = "primary_ready"
         _schedule_fallback_snapshot(
             background_tasks,

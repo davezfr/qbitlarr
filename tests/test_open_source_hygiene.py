@@ -184,3 +184,33 @@ def test_pyproject_exposes_qbitlarr_console_script():
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert pyproject["project"]["scripts"]["qbitlarr"] == "app.cli:main"
+
+
+def test_production_requirements_do_not_install_test_runner():
+    requirements = (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+
+    assert not any(line.startswith("pytest") for line in requirements)
+
+
+def test_dockerfile_runs_api_as_non_root_user():
+    dockerfile = (REPO_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "USER qbitlarr" in dockerfile
+
+
+def test_compose_uses_pinned_third_party_image_tags():
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert ":latest" not in compose
+    assert "lscr.io/linuxserver/prowlarr:2.3.5.5327-ls147" in compose
+    assert "ghcr.io/flaresolverr/flaresolverr:v3.5.0" in compose
+
+
+def test_github_actions_runs_pytest_on_push_and_pull_request():
+    workflow = REPO_ROOT / ".github" / "workflows" / "tests.yml"
+
+    assert workflow.exists()
+    content = workflow.read_text(encoding="utf-8")
+    assert "pull_request:" in content
+    assert "push:" in content
+    assert "pytest -q" in content

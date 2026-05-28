@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
@@ -15,7 +16,8 @@ from app.models import TorrentStatus
 
 
 logger = logging.getLogger("qbitlarr-api.qbittorrent")
-_TORRENT_FILE_CACHE: dict[str, bytes] = {}
+_TORRENT_FILE_CACHE_MAX_ENTRIES = 200
+_TORRENT_FILE_CACHE: OrderedDict[str, bytes] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,7 @@ def _should_upload_torrent_file(download_link: str) -> bool:
 async def _download_torrent_file(download_link: str, settings: Settings) -> bytes:
     fetch_url = _download_url_with_prowlarr_api_key(download_link, settings)
     if fetch_url in _TORRENT_FILE_CACHE:
+        _TORRENT_FILE_CACHE.move_to_end(fetch_url)
         return _TORRENT_FILE_CACHE[fetch_url]
 
     try:
@@ -111,8 +114,15 @@ async def _download_torrent_file(download_link: str, settings: Settings) -> byte
         logger.warning("Torrent file URL returned an empty response")
         raise UpstreamServiceError("Torrent file response was empty")
 
-    _TORRENT_FILE_CACHE[fetch_url] = response.content
+    _cache_torrent_file(fetch_url, response.content)
     return response.content
+
+
+def _cache_torrent_file(fetch_url: str, content: bytes) -> None:
+    _TORRENT_FILE_CACHE[fetch_url] = content
+    _TORRENT_FILE_CACHE.move_to_end(fetch_url)
+    while len(_TORRENT_FILE_CACHE) > _TORRENT_FILE_CACHE_MAX_ENTRIES:
+        _TORRENT_FILE_CACHE.popitem(last=False)
 
 
 def _download_url_with_prowlarr_api_key(download_link: str, settings: Settings) -> str:

@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 from types import SimpleNamespace
 
-from app.services.qbittorrent import _TORRENT_FILE_CACHE, add_download_to_qbittorrent
+from app.services.qbittorrent import _TORRENT_FILE_CACHE, _TORRENT_FILE_CACHE_MAX_ENTRIES, add_download_to_qbittorrent
 
 
 class FakeQbittorrentClient:
@@ -181,6 +181,21 @@ def test_add_download_does_not_duplicate_existing_prowlarr_api_key(monkeypatch):
     asyncio.run(add_download_to_qbittorrent("http://prowlarr.test/1/download?link=abc&apikey=already", _settings()))
 
     assert FakeAsyncClient.fetched_urls == ["http://prowlarr.test/1/download?link=abc&apikey=already"]
+
+
+def test_torrent_file_cache_evicts_oldest_entry_when_full(monkeypatch):
+    _reset_fakes()
+    monkeypatch.setattr("app.services.qbittorrent.qbittorrentapi.Client", FakeQbittorrentClient)
+    monkeypatch.setattr("app.services.qbittorrent.httpx.AsyncClient", FakeAsyncClient)
+
+    for index in range(_TORRENT_FILE_CACHE_MAX_ENTRIES):
+        _TORRENT_FILE_CACHE[f"http://prowlarr.test/{index}/download?apikey=secret"] = TORRENT_CONTENT
+
+    asyncio.run(add_download_to_qbittorrent("http://prowlarr.test/new/download", _settings()))
+
+    assert len(_TORRENT_FILE_CACHE) == _TORRENT_FILE_CACHE_MAX_ENTRIES
+    assert "http://prowlarr.test/0/download?apikey=secret" not in _TORRENT_FILE_CACHE
+    assert "http://prowlarr.test/new/download?apikey=secret" in _TORRENT_FILE_CACHE
 
 
 def test_add_download_returns_qbittorrent_status_for_added_torrent(monkeypatch):
