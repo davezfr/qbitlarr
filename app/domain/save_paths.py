@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.config import Settings
+from app.domain.quality import MediaType, parse_quality
 
 
 DEFAULT_ALLOWED_SAVE_PATHS = (
@@ -20,6 +21,19 @@ def validate_save_path_override(save_path: str | None, settings: Settings) -> st
         return normalized
 
     raise ValueError("save_path must be inside a configured qBitlarr save path")
+
+
+def default_save_path_for_title(
+    *,
+    settings: Settings,
+    media_type: MediaType,
+    title: str,
+) -> str:
+    if media_type == "tv":
+        return getattr(settings, "qbitlarr_save_path_tv", DEFAULT_ALLOWED_SAVE_PATHS[2])
+    if parse_quality(title).resolution == "2160p":
+        return getattr(settings, "qbitlarr_save_path_movie_4k", DEFAULT_ALLOWED_SAVE_PATHS[1])
+    return getattr(settings, "qbitlarr_save_path_movie", DEFAULT_ALLOWED_SAVE_PATHS[0])
 
 
 def _allowed_save_paths(settings: Settings) -> list[str]:

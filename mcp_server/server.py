@@ -131,7 +131,8 @@ def create_mcp_server() -> FastMCP:
         Args:
             download_link: A download_link value returned by qbitlarr_search.
             save_path: Optional qBittorrent save path override, such as
-                "/media/Kids". Leave unset to use qBittorrent's default path.
+                "/media/Kids". Leave unset to use qBitlarr's inferred default
+                media path.
         """
         return await get_qbitlarr_client().download(download_link, save_path=save_path)
 

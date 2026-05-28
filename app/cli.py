@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     download_parser = subparsers.add_parser("download", help="Queue a known download link.")
     download_parser.add_argument("download_link", help="Magnet, http(s), or bc download link.")
-    download_parser.add_argument("--save-path", help="Optional qBittorrent save path override.")
+    download_parser.add_argument("--save-path", help="Optional qBittorrent save path override. Defaults to qBitlarr's inferred media path.")
 
     downloads_parser = subparsers.add_parser("downloads", help="List qBittorrent downloads.")
     downloads_parser.add_argument("--watch", action="store_true", help="Repeat until interrupted.")
