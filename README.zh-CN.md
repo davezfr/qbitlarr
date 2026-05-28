@@ -413,6 +413,16 @@ qbitlarr/
 - **`app/client.py`** 是唯一 HTTP client。CLI（`app/cli.py`）和 stdio MCP（`mcp_server/server.py`）都会调用它，所以不同入口的行为保持一致。
 - **REST API 是 canonical surface。** MCP 和 CLI 都只是它的 client。如果你要把 qBitlarr 嵌入到别的系统里，直接调用 REST endpoints。
 
+## 第三方项目
+
+qBitlarr 会与这些第三方项目集成：
+
+- **[Prowlarr](https://github.com/Prowlarr/Prowlarr)** — GPL-3.0。qBitlarr 可以通过 Docker Compose 把 Prowlarr 作为独立服务启动，并通过它的 HTTP API 通信。
+- **[qBittorrent](https://github.com/qbittorrent/qBittorrent)** — GPL-2.0。qBitlarr 需要你自行提供 qBittorrent，并通过它的 Web UI API 通信。
+- **[FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)** — MIT。qBitlarr 的 Docker Compose 配置会包含它，作为 Prowlarr indexer 在需要时使用的可选 challenge proxy。
+
+qBitlarr 与 Prowlarr、qBittorrent、FlareSolverr 及其维护者没有从属、背书或赞助关系。
+
 ## License
 
 MIT.

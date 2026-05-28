@@ -413,6 +413,16 @@ qbitlarr/
 - **`app/client.py`** is the only HTTP client. Both the CLI (`app/cli.py`) and the stdio MCP (`mcp_server/server.py`) call into it, so behavior stays consistent across interfaces.
 - **The REST API is the canonical surface.** MCP and CLI are both clients of it. If you're embedding qBitlarr in another system, hit the REST endpoints directly.
 
+## Third-Party Projects
+
+qBitlarr integrates with these third-party projects:
+
+- **[Prowlarr](https://github.com/Prowlarr/Prowlarr)** — GPL-3.0. qBitlarr can run Prowlarr as a separate Docker Compose service and talks to it through its HTTP API.
+- **[qBittorrent](https://github.com/qbittorrent/qBittorrent)** — GPL-2.0. qBitlarr expects you to provide qBittorrent separately and talks to it through its Web UI API.
+- **[FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)** — MIT. qBitlarr's Docker Compose setup includes it as an optional challenge proxy for Prowlarr indexers that need it.
+
+qBitlarr is not affiliated with, endorsed by, or sponsored by Prowlarr, qBittorrent, FlareSolverr, or their maintainers.
+
 ## License
 
 MIT.
