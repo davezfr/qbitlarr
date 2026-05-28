@@ -1,0 +1,325 @@
+from __future__ import annotations
+
+import io
+import json
+import os
+from types import SimpleNamespace
+
+from app.cli import main
+from app.client import QbitlarrApiError
+
+
+class FakeClient:
+    def __init__(self):
+        self.calls: list[tuple[str, dict]] = []
+
+    async def handle(self, user_message, user_id=None, save_path=None, mode=None):
+        self.calls.append(
+            (
+                "handle",
+                {
+                    "user_message": user_message,
+                    "user_id": user_id,
+                    "save_path": save_path,
+                    "mode": mode,
+                },
+            )
+        )
+        return {
+            "status": "success",
+            "action": "auto_download",
+            "title": "The Hitch-Hiker (1953)",
+            "quality": "1080p WEB-DL H.264",
+            "message": "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264.",
+        }
+
+    async def search(self, *, identifier=None, query=None, categories=None, indexer_ids=None):
+        self.calls.append(
+            (
+                "search",
+                {
+                    "identifier": identifier,
+                    "query": query,
+                    "categories": categories,
+                    "indexer_ids": indexer_ids,
+                },
+            )
+        )
+        return [{"title": "The.General.1926.1080p.WEB-DL.H.264-GRP", "seeders": 42}]
+
+    async def download(self, download_link, save_path=None):
+        self.calls.append(("download", {"download_link": download_link, "save_path": save_path}))
+        return {"status": "success", "message": "Download queued"}
+
+    async def list_downloads(self):
+        self.calls.append(("downloads", {}))
+        return [{"name": "Ubuntu 24.04", "state": "downloading", "progress": 0.5}]
+
+    async def health(self, *, deep=False):
+        self.calls.append(("health", {"deep": deep}))
+        return {"status": "ok", "service": "qBitlarr API"}
+
+    async def list_prowlarr_indexers(self):
+        self.calls.append(("indexers", {}))
+        return [{"id": 10, "name": "Trusted Indexer", "enabled": True}]
+
+    async def get_query_snapshot(self, query_id):
+        self.calls.append(("snapshot", {"query_id": query_id}))
+        return {"query_id": query_id, "status": "fallback_ready"}
+
+
+def _run_cli(argv, fake_client: FakeClient):
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = main(
+        argv,
+        stdout=stdout,
+        stderr=stderr,
+        client_factory=lambda args: fake_client,
+    )
+
+    return SimpleNamespace(
+        exit_code=exit_code,
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
+    )
+
+
+def test_cli_handle_prints_auto_download_message_by_default():
+    fake_client = FakeClient()
+
+    result = _run_cli(["handle", "tt0045877"], fake_client)
+
+    assert result.exit_code == 0
+    assert result.stdout == "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264.\n"
+    assert fake_client.calls == [
+        (
+            "handle",
+            {
+                "user_message": "tt0045877",
+                "user_id": None,
+                "save_path": None,
+                "mode": None,
+            },
+        )
+    ]
+
+
+def test_cli_handle_prints_numbered_results_by_default():
+    class ManualResultsClient(FakeClient):
+        async def handle(self, user_message, user_id=None, save_path=None, mode=None):
+            self.calls.append(
+                (
+                    "handle",
+                    {
+                        "user_message": user_message,
+                        "user_id": user_id,
+                        "save_path": save_path,
+                        "mode": mode,
+                    },
+                )
+            )
+            return {
+                "status": "success",
+                "action": "show_results",
+                "message": "Here are the top results, please reply with the number:",
+                "results": [
+                    {
+                        "index": 1,
+                        "title": "The.General.1926.1080p.WEB-DL.H.264-GRP",
+                        "quality": "1080p WEB-DL H.264",
+                        "seeders": 42,
+                        "size": 1_500_000_000,
+                        "download_link": "https://example.test/the-general.torrent",
+                    },
+                    {
+                        "index": 2,
+                        "title": "The.General.1926.720p.WEB-DL.H.264-GRP",
+                        "quality": "720p WEB-DL H.264",
+                        "seeders": 9,
+                        "size": None,
+                        "download_link": "https://example.test/the-general-720p.torrent",
+                    },
+                ],
+            }
+
+    result = _run_cli(["handle", "The General"], ManualResultsClient())
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "Here are the top results, please reply with the number:\n"
+        "\n"
+        "1. The.General.1926.1080p.WEB-DL.H.264-GRP\n"
+        "   Quality: 1080p WEB-DL H.264 | Seeders: 42 | Size: 1.5 GB\n"
+        "2. The.General.1926.720p.WEB-DL.H.264-GRP\n"
+        "   Quality: 720p WEB-DL H.264 | Seeders: 9\n"
+        "\n"
+        "Use --json to inspect download links or pass a chosen link to `qbitlarr download`.\n"
+    )
+    assert "download_link" not in result.stdout
+
+
+def test_cli_handle_json_flag_forwards_message_mode_and_save_path():
+    fake_client = FakeClient()
+
+    result = _run_cli(
+        ["handle", "The", "Hitch-Hiker", "--mode", "manual", "--save-path", "/media/Kids", "--json"],
+        fake_client,
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["title"] == "The Hitch-Hiker (1953)"
+    assert fake_client.calls == [
+        (
+            "handle",
+            {
+                "user_message": "The Hitch-Hiker",
+                "user_id": None,
+                "save_path": "/media/Kids",
+                "mode": "manual",
+            },
+        )
+    ]
+
+
+def test_cli_search_prints_json_for_jq():
+    fake_client = FakeClient()
+
+    result = _run_cli(["search", "--query", "The General 1926 1080p"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)[0]["seeders"] == 42
+    assert fake_client.calls == [
+        (
+            "search",
+            {
+                "identifier": None,
+                "query": "The General 1926 1080p",
+                "categories": None,
+                "indexer_ids": None,
+            },
+        )
+    ]
+
+
+def test_cli_search_forwards_categories_and_indexer_ids():
+    fake_client = FakeClient()
+
+    result = _run_cli(
+        [
+            "search",
+            "--query",
+            "The General 1926",
+            "--category",
+            "2000",
+            "--category",
+            "2040",
+            "--indexer-id",
+            "10",
+        ],
+        fake_client,
+    )
+
+    assert result.exit_code == 0
+    assert fake_client.calls == [
+        (
+            "search",
+            {
+                "identifier": None,
+                "query": "The General 1926",
+                "categories": [2000, 2040],
+                "indexer_ids": [10],
+            },
+        )
+    ]
+
+
+def test_cli_download_forwards_link_and_save_path():
+    fake_client = FakeClient()
+
+    result = _run_cli(
+        ["download", "magnet:?xt=urn:btih:abcdef", "--save-path", "/media/Kids"],
+        fake_client,
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["message"] == "Download queued"
+    assert fake_client.calls == [
+        (
+            "download",
+            {
+                "download_link": "magnet:?xt=urn:btih:abcdef",
+                "save_path": "/media/Kids",
+            },
+        )
+    ]
+
+
+def test_cli_downloads_lists_torrents():
+    fake_client = FakeClient()
+
+    result = _run_cli(["downloads"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)[0]["name"] == "Ubuntu 24.04"
+    assert fake_client.calls == [("downloads", {})]
+
+
+def test_cli_health_supports_deep_check():
+    fake_client = FakeClient()
+
+    result = _run_cli(["health", "--deep"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["service"] == "qBitlarr API"
+    assert fake_client.calls == [("health", {"deep": True})]
+
+
+def test_cli_indexers_lists_prowlarr_indexers():
+    fake_client = FakeClient()
+
+    result = _run_cli(["indexers"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)[0]["id"] == 10
+    assert fake_client.calls == [("indexers", {})]
+
+
+def test_cli_snapshot_reads_saved_query_snapshot():
+    fake_client = FakeClient()
+
+    result = _run_cli(["snapshot", "query-123"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["status"] == "fallback_ready"
+    assert fake_client.calls == [("snapshot", {"query_id": "query-123"})]
+
+
+def test_cli_search_requires_identifier_or_query():
+    fake_client = FakeClient()
+
+    result = _run_cli(["search"], fake_client)
+
+    assert result.exit_code == 1
+    assert "search requires --identifier, --query, or both" in result.stderr
+    assert fake_client.calls == []
+
+
+def test_cli_api_errors_are_printed_to_stderr():
+    class FailingClient(FakeClient):
+        async def health(self, *, deep=False):
+            raise QbitlarrApiError("qBitlarr API is unreachable: ConnectError")
+
+    result = _run_cli(["health"], FailingClient())
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert "qBitlarr API is unreachable: ConnectError" in result.stderr
+
+
+def test_bin_qbitlarr_launcher_exists_and_is_executable():
+    script_path = "bin/qbitlarr"
+
+    assert os.path.exists(script_path)
+    assert os.access(script_path, os.X_OK)

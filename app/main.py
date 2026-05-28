@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import logging
+import os
+from hmac import compare_digest
+
+from fastapi import FastAPI, Request
+from fastapi_mcp import FastApiMCP
+from starlette.responses import JSONResponse
+
+from app.api.download import router as download_router
+from app.api.downloads_list import router as downloads_list_router
+from app.api.handle import get_categories, router as handle_router
+from app.api.prowlarr import router as prowlarr_router
+from app.api.query_snapshots import router as query_snapshots_router
+from app.api.search import router as search_router
+from app.config import Settings, get_settings
+from app.domain.quality import calculate_score
+from app.domain.search_results import build_prowlarr_search_params, normalize_search_results
+from app.exceptions import ConfigurationError, UpstreamServiceError
+from app.models import (
+    DownloadRequest,
+    DownloadResponse,
+    HandleRequest,
+    HandleResponse,
+    ManualSearchResult,
+    ProwlarrIndexer,
+    QuerySnapshot,
+    QuerySnapshotEntry,
+    SearchRequest,
+    SearchResult,
+    TorrentStatus,
+    normalize_download_link,
+)
+from app.services.prowlarr import check_prowlarr_health, list_prowlarr_indexers, search_prowlarr
+from app.services.qbittorrent import add_download_to_qbittorrent, check_qbittorrent_health, list_downloads_from_qbittorrent
+
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+
+app = FastAPI(title="qBitlarr API")
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    expected_api_key = os.getenv("QBITLARR_API_KEY", "").strip()
+    if expected_api_key:
+        provided_api_key = request.headers.get("X-API-Key", "")
+        if not compare_digest(provided_api_key, expected_api_key):
+            return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+    return await call_next(request)
+
+
+app.include_router(search_router)
+app.include_router(download_router)
+app.include_router(downloads_list_router)
+app.include_router(handle_router)
+app.include_router(prowlarr_router)
+app.include_router(query_snapshots_router)
+
+
+@app.get(
+    "/health",
+    operation_id="qbitlarr_health",
+    summary="Check qBitlarr API health",
+    tags=["qbitlarr"],
+)
+async def health(deep: bool = False):
+    if not deep:
+        return {"status": "ok", "service": "qBitlarr API"}
+
+    try:
+        settings = get_settings()
+    except ConfigurationError as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "service": "qBitlarr API",
+                "dependencies": {
+                    "config": {"status": "error", "detail": str(exc)},
+                },
+            },
+        )
+
+    prowlarr_status = await check_prowlarr_health(settings)
+    qbittorrent_status = await check_qbittorrent_health(settings)
+    dependencies = {
+        "prowlarr": prowlarr_status,
+        "qbittorrent": qbittorrent_status,
+    }
+    status = "ok" if all(item.get("status") == "ok" for item in dependencies.values()) else "degraded"
+    payload = {
+        "status": status,
+        "service": "qBitlarr API",
+        "dependencies": dependencies,
+    }
+    if status != "ok":
+        return JSONResponse(status_code=503, content=payload)
+    return payload
+
+
+QBITLARR_MCP_OPERATIONS = [
+    "qbitlarr_download",
+    "qbitlarr_get_query_snapshot",
+    "qbitlarr_handle",
+    "qbitlarr_health",
+    "qbitlarr_list_downloads",
+    "qbitlarr_list_prowlarr_indexers",
+    "qbitlarr_search",
+]
+
+
+mcp = FastApiMCP(
+    app,
+    name="qBitlarr",
+    description="Safely search movie and TV requests and add selected downloads to qBittorrent.",
+    include_operations=QBITLARR_MCP_OPERATIONS,
+)
+mcp.mount_http(mount_path="/mcp")
+
+
+__all__ = [
+    "ConfigurationError",
+    "DownloadRequest",
+    "DownloadResponse",
+    "HandleRequest",
+    "HandleResponse",
+    "ManualSearchResult",
+    "ProwlarrIndexer",
+    "QuerySnapshot",
+    "QuerySnapshotEntry",
+    "SearchRequest",
+    "SearchResult",
+    "Settings",
+    "TorrentStatus",
+    "UpstreamServiceError",
+    "add_download_to_qbittorrent",
+    "app",
+    "build_prowlarr_search_params",
+    "calculate_score",
+    "get_categories",
+    "get_settings",
+    "health",
+    "list_prowlarr_indexers",
+    "list_downloads_from_qbittorrent",
+    "mcp",
+    "normalize_download_link",
+    "normalize_search_results",
+    "search_prowlarr",
+]

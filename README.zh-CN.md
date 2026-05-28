@@ -1,0 +1,418 @@
+# qBitlarr
+
+**语言:** [English](README.md) | 中文 | [Français](README.fr.md)
+
+**一个连接 Prowlarr 和 qBittorrent 的轻量桥接服务，支持 REST、MCP 和 CLI。**
+
+适合已经在跑 Plex、Jellyfin 或 Emby，并且想让朋友、家人或 LLM Agent 通过简单请求下载影视内容的人。你不用把 qBittorrent 账号暴露出去，也不用部署完整的 Sonarr + Radarr 套件。
+
+qBitlarr 是一个小型 FastAPI 服务，可以：
+
+- 接收自然语言、IMDb ID 或 IMDb URL。
+- 通过你的 Prowlarr indexer 搜索资源。
+- 按可配置的质量偏好自动挑选更合适的发布版本。
+- 把任务加入你现有的 qBittorrent。
+- 同时暴露 REST、MCP 和小型 CLI，方便接入 Claude Desktop、Cursor、ChatGPT custom tools、Telegram bot、shell 脚本、cron job 或你自己的 Agent。
+
+可通过任意 HTTP client、Claude/Cursor/ChatGPT 的 MCP，或 `qbitlarr` CLI 使用。
+
+## 架构
+
+![qBitlarr architecture: a friend, family member, shell script, or LLM agent talks REST, MCP, or CLI to the qbitlarr FastAPI service, which uses Prowlarr and FlareSolverr to search torrent indexers and then drives your own qBittorrent Web UI, which saves files into your Plex/Jellyfin/Emby library.](docs/architecture.png)
+
+REST / MCP / CLI 架构图的可编辑源文件：[docs/architecture.svg](docs/architecture.svg)。
+
+## Docker Compose 会启动什么
+
+- `qbitlarr` — FastAPI 服务，默认在 `http://localhost:8000`
+- `prowlarr` — 内置 Prowlarr，默认在 `http://localhost:9696`
+- `flaresolverr` — 内置 FlareSolverr，默认在 `http://localhost:8191`
+
+qBittorrent **不会**被打包进 compose。你需要把 qBitlarr 指向一个已有的 qBittorrent，例如桌面版、NAS、seedbox 或另一个容器。相关环境变量是 `QBIT_URL`、`QBIT_USERNAME`、`QBIT_PASSWORD`。
+
+## qBittorrent 设置
+
+qBitlarr 需要你先安装好 qBittorrent，因为每个人的下载环境和媒体库路径都不一样：有人跑桌面版，有人跑 NAS、seedbox 或单独的容器。qBitlarr 只通过 qBittorrent Web UI API 把下载链接发过去。
+
+启动 qBitlarr 前：
+
+1. 在负责下载的机器上安装 qBittorrent。
+2. 在 qBittorrent 里打开 **Preferences / Options → Web UI**，启用 Web User Interface。
+3. 设置或确认 Web UI 的用户名和密码。
+4. 把这些信息填进 `.env`：
+
+```sh
+QBIT_URL=http://host.docker.internal:8080
+QBIT_USERNAME=your-webui-username
+QBIT_PASSWORD=your-webui-password
+```
+
+如果 qBittorrent 和 Docker Compose 跑在同一台机器上，通常用 `http://host.docker.internal:8080`。如果 qBittorrent 跑在 NAS、seedbox 或另一台电脑上，就填写那台机器的局域网地址，例如 `http://192.168.1.50:8080`。不要在 `.env` 里用 `localhost` 指向宿主机上的 qBittorrent；在 Docker 容器里，`localhost` 指的是 qBitlarr 容器自己。
+
+## 快速开始
+
+```sh
+cp .env.example .env
+# 编辑 .env：填入 qBittorrent Web UI 的 QBIT_URL、QBIT_USERNAME、QBIT_PASSWORD
+
+# 1. 先启动 Prowlarr，方便获取 API key
+docker compose up -d prowlarr flaresolverr
+
+# 2. 打开 http://localhost:9696，完成首次设置，添加 indexer，
+#    然后从 Settings -> General -> Security 复制 API key
+# 3. 把 API key 写入 .env：PROWLARR_API_KEY=...
+
+# 4. 启动剩余服务
+docker compose up -d --build
+
+# 5. 试一下
+curl -X POST http://localhost:8000/handle \
+  -H 'Content-Type: application/json' \
+  -d '{"user_message":"tt0045877"}'
+```
+
+如果想检查依赖是否也可达，可以用深度健康检查：
+
+```sh
+curl 'http://localhost:8000/health?deep=true'
+```
+
+## 用起来是什么感觉
+
+把 qBitlarr 接到你的 Agent 上（或者直接用 CLI）之后，你就可以像跟懂你媒体库的朋友说话一样跟它沟通：
+
+下面的示例使用 [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt0045877/)，这是一部被 Library of Congress 收录在 [Public Domain Films from the National Film Registry](https://www.loc.gov/free-to-use/public-domain-films-from-the-national-film-registry/) 列表中的 public-domain film。权利状态仍可能因司法辖区、具体修复版、配乐、字幕或版本而不同。
+
+<table>
+  <tr>
+    <td width="50%">
+      <img src="docs/screenshots/telegram-imdb-share.jpg" alt="Telegram 示例：把 The Hitch-Hiker 的 IMDb 页面分享给 Agent，Agent 通过 qBitlarr 开始下载。">
+      <br>
+      <em>截图示例仅供参考。图中使用的基础标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐或字幕而不同。</em>
+    </td>
+    <td width="50%">
+      <img src="docs/screenshots/telegram-public-domain-selection.jpg" alt="Telegram 示例：选择并查看 Night of the Living Dead 1968 下载状态。">
+      <br>
+      <em>截图示例仅供参考。图中使用的基础标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐或字幕而不同。</em>
+    </td>
+  </tr>
+</table>
+
+> **你：** *帮我下载 The Hitch-Hiker。*
+> **Agent：** 已开始自动下载 The Hitch-Hiker 的 1080p WEB-DL H.264 版本。
+
+> **你：** *帮我下载 IMDb 上的 tt0045877。*
+> **Agent：** 已开始自动下载 The Hitch-Hiker 的 1080p WEB-DL H.264 版本。
+
+> **你：** *我想要 4K 的 The Hitch-Hiker。*
+> **Agent：** 已开始自动下载 The Hitch-Hiker 的 2160p UHD BluRay REMUX H.265 版本。
+
+> **你：** *现在在下载什么？*
+> **Agent：** The Hitch-Hiker — 42% — 下载中 8.4 MB/s · 预计 6 分钟
+
+> **你：** *帮我找 The Hitch-Hiker，但我自己挑版本。*
+> **Agent：** 这里是热门结果，回复编号即可：
+>   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
+>   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+>   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
+
+幕后逻辑：当 Agent 拿到明确标题时，会自动挑选 seeders 足够的最佳 1080p 版本并加入 qBittorrent 队列；当标题模糊（纯关键词搜索）时，会返回排序后的列表等你选择。状态查询是通过 `qbitlarr_list_downloads` 实时拉取 qBittorrent 的进度、速度、ETA、seeders 等信息。你也可以在请求里加 *"4K"*、*"Remux"*、*"720p HEVC"* 来覆盖默认画质偏好。
+
+### Pro tip：直接从 IMDb 应用分享
+
+最快的使用方式是根本不打字：
+
+1. 在 IMDb 应用（或任何能看到 IMDb 链接的网站）里找到你想看的内容。
+2. 点分享 → 选择你 Agent 所在的聊天应用（Telegram、WhatsApp、Discord、Signal、iMessage 等）。
+3. Agent 收到的就是类似 `https://www.imdb.com/title/tt0045877/` 的链接，能自动识别标题 — 不用打字、不会拼错、毫无歧义。
+
+如果手头有原始的 IMDb ID（比如 `tt0045877`）也一样能用。qBitlarr 会提取 ID，对你的 indexer 做精确查询，并在几秒内把最佳匹配加入队列。
+
+## 什么时候用它，而不是 Sonarr / Radarr
+
+如果你想要完整媒体库管理器，比如剧集追踪、自动监控新发布、升级策略、几十个质量 profile 配置，请用 **Sonarr/Radarr**。
+
+如果你只想要这种流程：*"朋友说一个电影名 → 一小时后出现在 Plex 里"*，用 **qBitlarr** 更轻。它没有媒体库、没有监控、没有 profile UI，只有一个服务和几个环境变量。
+
+## 负责任使用
+
+qBitlarr 是一个自动化桥接工具。它不提供内容、indexer、tracker 或法律建议。请只在你的司法管辖区允许的前提下，使用你有权访问的 indexer 和媒体内容。
+
+## 在 Prowlarr 里设置 Indexer
+
+如果你第一次接触 **Prowlarr**：它是一个 *indexer 聚合器*。它负责连接多个 torrent 站点，也就是 indexer，并给 qBitlarr 一个统一搜索 API。这样 qBitlarr 不需要了解几十个站点各自的规则和怪癖。你只需要在 Prowlarr 里添加一次 indexer，之后每次 qBitlarr 搜索都会并行查询它们。
+
+**添加 indexer：**
+
+1. 打开 `http://localhost:9696`，进入 **Indexers → + Add Indexer**。
+2. 在过滤框里输入 indexer 名称。
+3. **Public indexer**：通常直接点 **Save**，不需要登录。
+4. **Private tracker**：把该 tracker 账号里的 cookie、API key 或 passkey 填进去。不同 tracker 的字段不完全一样，Prowlarr 表单会提示需要什么。
+5. 点 **Test** 确认 Prowlarr 可以访问，然后点 **Save**。
+6. 每个 indexer 都会有一个数字 ID，可以用 `curl http://localhost:8000/prowlarr/indexers` 查看。
+
+如果 indexer 在 Cloudflare 后面，还需要给它加上 `flaresolverr` proxy tag。下面的 [为什么内置 FlareSolverr](#为什么内置-flaresolverr) 里有步骤。
+
+**Public indexer vs private tracker：**
+
+- **Public indexer** 通常比较容易添加，但信噪比较低，死种、垃圾结果和假资源更多。
+- **Private tracker** 需要账号，通常也有更严格的访问规则。不同 tracker 的字段不同，请按照你有权使用的 tracker 要求来配置。
+
+**建议：**
+
+- **先从 2–4 个 indexer 开始，不要一口气加 20 个。** 每个 indexer 都会增加搜索延迟，一个慢站点可能拖慢整个查询。堆很多 public indexer 通常只是在堆噪音。
+- **覆盖面和质量混合。** 一两个通用 public indexer 做兜底，再加你能访问的 private tracker，是比较稳的起点。
+- **不用配置 `Sync Profiles`**，除非你同时运行 Sonarr 或 Radarr。qBitlarr 不需要它。
+
+indexer 配好后，可以在 [Indexer 选择](#indexer-选择) 里设置 primary / fallback ID。这样 qBitlarr 会先搜快且可信的 indexer，只有缺结果或结果不合适时才回退到更慢、更吵的 indexer。
+
+## 为什么内置 FlareSolverr
+
+一些常见 indexer 会放在 **Cloudflare 反机器人挑战**后面。Prowlarr 默认发出的普通 HTTP 请求会拿到一个挑战页面，而不是搜索结果，最后看起来就像 indexer 没有返回任何东西。
+
+**FlareSolverr** 是一个小型 headless-Chrome proxy，用来替 Prowlarr 处理这些挑战。当 Prowlarr 被配置为让某些 indexer 走 FlareSolverr 时，FlareSolverr 会用真实浏览器打开页面，等待 Cloudflare 放行，再把 cookie 交回给 Prowlarr，让真正的搜索 API 调用成功。
+
+qBitlarr 把它放进 compose，是因为用户一旦在 Prowlarr 里添加 CF-protected indexer，就很容易撞上这个问题。而官方解决方式通常是“另外安装 FlareSolverr”。这里直接随 compose 提供，减少踩坑。
+
+**在 Prowlarr 中接入 FlareSolverr**（首次启动后做一次）：
+
+1. 打开 `http://localhost:9696`。
+2. 进入 **Settings → Indexers → Indexer Proxies**。
+3. 点击 **+**，选择 **FlareSolverr**。
+4. **Host** 填 `http://flaresolverr:8191`，也就是 compose 内部 hostname；**Tag** 可以填 `flaresolverr`。
+5. 保存。然后打开任何 Cloudflare-protected indexer，把同一个 `flaresolverr` tag 加上并保存。
+
+没有这个 tag 的 indexer 不会走 FlareSolverr，所以普通站点没有额外性能开销。如果你不用任何 CF-protected indexer，可以停止该容器：`docker compose stop flaresolverr`，qBitlarr 仍然能工作。
+
+## 质量偏好
+
+默认情况下，qBitlarr 会偏好 **1080p WEB-DL H.264**，并要求至少 5 个 seeders。可以通过环境变量修改：
+
+```sh
+QBITLARR_PREFER_RESOLUTION=1080p   # 480p | 720p | 1080p | 2160p
+QBITLARR_PREFER_SOURCE=WEB-DL      # WEB-DL | WEBRip | BluRay | HDTV
+QBITLARR_PREFER_CODEC=H.264        # H.264 | H.265
+QBITLARR_MIN_SEEDERS=5
+```
+
+终端用户也可以在每次请求里用自然语言覆盖默认值：
+
+- `"The Hitch-Hiker 4K"` → 强制 2160p
+- `"The Hitch-Hiker Remux"` → 强制 Remux 版本
+- `"The Hitch-Hiker 720p HEVC"` → 720p H.265
+
+## 输出模式
+
+`POST /handle` 接受可选的 `mode` 字段，用来控制收到 IMDb ID 后的行为：
+
+- `auto`（默认）— 选择最佳版本并加入下载队列。适合朋友/家人这种“直接帮我处理”的使用方式。
+- `manual` — 总是返回排序后的候选列表，不会自动加入队列。适合想自己选择的高级用户。
+- `confirm` — 返回首选项和备选项，但不加入队列。适合需要用户确认后再执行的 Agent 流程。
+
+可以通过 `QBITLARR_DEFAULT_MODE=auto|manual|confirm` 修改服务默认模式。自动下载响应里总会带一个 `alternatives` 列表，包含 2–3 个备选结果，方便 Agent 不用再次调用工具就能问“或者你是想要这个吗？”。
+
+## 接入 Agent
+
+qBitlarr 本质上是一个 **MCP 服务器**，所以任何支持 [Model Context Protocol](https://modelcontextprotocol.io) 的 Agent — Claude Desktop、Cursor、Cline、Hermes、OpenClaw、通过 MCP bridge 接入的 ChatGPT、你自己写的 Agent — 都可以调用它。
+
+MCP 工具本身不绑定语言。你用什么语言问，Agent 通常就可以用同一种语言回答；中文、英文、法语或其它语言都取决于你自己的 Agent 背后接入的 LLM，而不是 qBitlarr 本身。
+
+提供两种 transport：
+
+- **stdio MCP**：大多数桌面 Agent 应用偏好这种方式，它们会把 `bin/qbitlarr-mcp` 作为子进程启动。
+- **HTTP MCP**：服务在 `http://localhost:8000/mcp`，适合更喜欢 HTTP 的 host。
+
+两种方式暴露的工具相同：`qbitlarr_handle`、`qbitlarr_search`、`qbitlarr_download`、`qbitlarr_list_downloads`、`qbitlarr_get_query_snapshot`、`qbitlarr_list_prowlarr_indexers`、`qbitlarr_health`。
+
+如果设置了 `QBITLARR_API_KEY`，两种 transport 都需要 `X-API-Key` header。stdio MCP 会从同名环境变量读取。
+
+### Claude Desktop
+
+编辑 `~/Library/Application Support/Claude/claude_desktop_config.json`（macOS）或 `%APPDATA%\Claude\claude_desktop_config.json`（Windows）：
+
+```json
+{
+  "mcpServers": {
+    "qbitlarr": {
+      "command": "/absolute/path/to/qbitlarr/bin/qbitlarr-mcp",
+      "env": {
+        "QBITLARR_API_URL": "http://localhost:8000",
+        "QBITLARR_API_KEY": ""
+      }
+    }
+  }
+}
+```
+
+重启 Claude Desktop，qbitlarr 的工具就会出现在工具列表里，Claude 在你提到影视下载时会自动使用。
+
+### Cursor
+
+设置 → **MCP** → **Add new MCP server**：
+
+```json
+{
+  "mcpServers": {
+    "qbitlarr": {
+      "command": "/absolute/path/to/qbitlarr/bin/qbitlarr-mcp"
+    }
+  }
+}
+```
+
+### 其它任意 MCP host（Hermes、OpenClaw、Cline、自定义 Agent）
+
+模式都一样，它们或支持其中之一，或两种 transport 都支持：
+
+- **Stdio 方式**：让 host 把 `bin/qbitlarr-mcp` 作为子进程启动（通过环境变量传 API URL 和可选的 API key）。
+- **HTTP 方式**：把 host 指向 `http://localhost:8000/mcp`，如果设了 API key 就加上 `X-API-Key` header。
+
+### 告诉 Agent 什么时候用 qBitlarr
+
+如果你的 Agent 支持 system prompt 或 “tool instructions” 字段，加一段简短提示，让它在合适的场景调用 qBitlarr：
+
+> *当用户想要下载其有权访问的电影、剧集或动漫时，使用 qbitlarr 的 MCP 工具。默认调用 `qbitlarr_handle` — 它能处理 IMDb ID、IMDb URL 和自由文本标题，会自动决定是直接下载还是返回候选列表。只在用户明确想从列表里挑选时才退回到 `qbitlarr_search` + `qbitlarr_download`。*
+
+这能提醒那些原本不知道你有下载工具的 Agent。
+
+### 快速验证连接
+
+接好之后让 Agent 跑一下：*“用 qbitlarr_health 检查服务是否在线。”* 如果返回 `{"status": "ok"}` 就说明连上了。加上 `--deep`（或传 `deep: true`）还可以顺便验证 Prowlarr 和 qBittorrent 的连通性。
+
+## CLI
+
+CLI 是同一个 REST API 的轻量客户端，MCP 也用这套接口。它会从环境变量读取 `QBITLARR_API_URL`、`QBITLARR_API_KEY` 和 `QBITLARR_API_TIMEOUT_SECONDS`，也可以用命令行参数覆盖。
+
+`handle` 默认输出适合人看的结果；如果需要原始结构化响应，加 `--json`。其他子命令默认输出 JSON，方便接 `jq`。
+
+```sh
+bin/qbitlarr handle "tt0045877"
+bin/qbitlarr handle "The Hitch-Hiker" --mode manual
+bin/qbitlarr handle "The Hitch-Hiker" --mode manual --json
+bin/qbitlarr search --query "The Hitch-Hiker 1953 1080p" | jq '.[0]'
+bin/qbitlarr download 'magnet:?xt=urn:btih:...'
+bin/qbitlarr downloads --watch
+bin/qbitlarr health --deep
+bin/qbitlarr indexers
+```
+
+magnet 链接经常包含 `&`，在 shell 里请用引号包起来。
+
+在 Docker 容器内部，可以用模块方式运行同一个 CLI：`docker compose exec qbitlarr python -m app.cli health --deep`。`bin/qbitlarr` launcher 是给宿主机 checkout 使用的。
+
+## 认证
+
+如果部署范围超过 localhost，请设置 `QBITLARR_API_KEY`。设置后，每个 REST 和 MCP 请求都需要 `X-API-Key` header：
+
+```sh
+curl -H 'X-API-Key: change-this' http://localhost:8000/health
+```
+
+留空则表示本地无认证使用。
+
+## Prowlarr URL
+
+`PROWLARR_URL` 是 qBitlarr 调用 Prowlarr API 时使用的地址。在 Docker Compose 里默认是 `http://prowlarr:9696`，也就是内部服务 hostname，大多数用户不需要改。
+
+`PROWLARR_DOWNLOAD_URL` 是可选项。只有当 Prowlarr 返回的 proxy download URL 需要先改写，qBitlarr 才能抓取 `.torrent` 文件时才设置。例如 qBitlarr 需要通过局域网地址访问 Prowlarr，而不是用 Docker 内部 hostname。
+
+## Indexer 选择
+
+`PROWLARR_PRIMARY_INDEXER_IDS` 和 `PROWLARR_FALLBACK_INDEXER_IDS` 是可选的逗号分隔 indexer ID。
+
+- 两个都留空时，Prowlarr 会搜索所有适用 indexer。
+- 设置 primary ID 后，会优先搜索你信任的一组 indexer。
+- 设置 fallback ID 后，只在 primary 结果缺失或不合适时再尝试更广、更慢或更吵的 indexer。
+
+Prowlarr 配好后可以这样查看 ID：
+
+```sh
+curl http://localhost:8000/prowlarr/indexers
+```
+
+## 保存路径
+
+`/handle` 自动下载会按媒体类型和分辨率选择保存路径：
+
+- `QBITLARR_SAVE_PATH_MOVIE=/downloads/movies`
+- `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`
+- `QBITLARR_SAVE_PATH_TV=/downloads/tv`
+
+`/handle` 和 `/download` 都接受可选的 `save_path` 字段，用于单次覆盖。覆盖路径必须位于上面配置的目录内，或位于逗号分隔的 `QBITLARR_EXTRA_SAVE_PATHS` 额外允许目录内，例如 `/media/Kids`。
+
+## REST API
+
+| Method | Path | 用途 |
+| --- | --- | --- |
+| GET | `/health` | 服务存活检查 |
+| GET | `/health?deep=true` | 存活检查 + Prowlarr/qBittorrent 可达性 |
+| POST | `/handle` | 主入口：搜索并按模式加入队列 |
+| POST | `/search` | 原始 Prowlarr 搜索 |
+| POST | `/download` | 加入一个已知下载链接 |
+| GET | `/downloads` | 列出 qBittorrent 中的 torrents |
+| GET | `/queries/{query_id}` | 重新读取保存过的搜索快照 |
+| GET | `/prowlarr/indexers` | 列出 Prowlarr indexer 和它们的 ID |
+
+示例：把一个已知链接加入指定目录。
+
+```sh
+curl -X POST http://localhost:8000/download \
+  -H 'Content-Type: application/json' \
+  -d '{"download_link":"magnet:?xt=urn:btih:...","save_path":"/media/Kids"}'
+```
+
+## 项目结构
+
+```
+qbitlarr/
+├── app/                          FastAPI 服务，核心实现
+│   ├── main.py                   应用入口，挂载 router 和 /mcp HTTP MCP
+│   ├── config.py                 环境变量配置
+│   ├── models.py                 Pydantic 请求/响应 schema
+│   ├── exceptions.py
+│   ├── client.py                 CLI 和 MCP 共享的异步 HTTP client
+│   ├── cli.py                    `qbitlarr` argparse CLI
+│   ├── api/                      REST endpoint handlers
+│   │   ├── handle.py             /handle 主编排：搜索 → 排序 → 入队
+│   │   ├── search.py             /search 原始 Prowlarr passthrough
+│   │   ├── download.py           /download 加入已知链接
+│   │   ├── downloads_list.py     /downloads qBittorrent 状态
+│   │   ├── query_snapshots.py    /queries/{id} 搜索快照
+│   │   └── prowlarr.py           /prowlarr/indexers indexer 发现
+│   ├── domain/                   纯逻辑，无 I/O
+│   │   ├── quality.py            标题解析、评分、QualityPreferences
+│   │   ├── search_results.py     Prowlarr 结果规范化
+│   │   └── torrent_metadata.py   .torrent 文件解码验证
+│   └── services/                 外部服务 client
+│       ├── prowlarr.py
+│       ├── qbittorrent.py
+│       └── query_snapshots.py
+├── mcp_server/
+│   └── server.py                 stdio MCP server，围绕 app/client.py 的薄封装
+├── bin/
+│   ├── qbitlarr                  CLI launcher
+│   └── qbitlarr-mcp              stdio MCP server launcher
+├── tests/                        pytest suite
+├── docs/
+│   ├── architecture.png
+│   ├── architecture.svg
+│   └── screenshots/              README 截图
+├── docker-compose.yml            打包 qbitlarr + prowlarr + flaresolverr
+├── Dockerfile                    构建 qbitlarr image
+├── requirements.txt
+├── .env.example                  复制为 .env 后填写
+├── README.md                     英文 README
+├── README.zh-CN.md               中文 README
+└── README.fr.md                  法文 README
+```
+
+**重要代码位置：**
+
+- **`app/api/handle.py`** 是主要逻辑所在：IMDb 检测、primary/fallback indexer cascade、排序、模式处理（`auto`/`manual`/`confirm`）。
+- **`app/domain/quality.py`** 是纯评分/排序层，没有网络调用。如果想改“怎么挑版本”，从这里开始。
+- **`app/client.py`** 是唯一 HTTP client。CLI（`app/cli.py`）和 stdio MCP（`mcp_server/server.py`）都会调用它，所以不同入口的行为保持一致。
+- **REST API 是 canonical surface。** MCP 和 CLI 都只是它的 client。如果你要把 qBitlarr 嵌入到别的系统里，直接调用 REST endpoints。
+
+## License
+
+MIT.

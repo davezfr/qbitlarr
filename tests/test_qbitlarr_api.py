@@ -1,0 +1,423 @@
+from types import SimpleNamespace
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.main import (
+    DownloadRequest,
+    HandleRequest,
+    SearchRequest,
+    Settings,
+    app,
+    build_prowlarr_search_params,
+    normalize_download_link,
+    normalize_search_results,
+)
+
+
+def test_settings_defaults_public_save_paths(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.delenv("PROWLARR_DOWNLOAD_URL", raising=False)
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.delenv("QBITLARR_SAVE_PATH_MOVIE", raising=False)
+    monkeypatch.delenv("QBITLARR_SAVE_PATH_MOVIE_4K", raising=False)
+    monkeypatch.delenv("QBITLARR_SAVE_PATH_TV", raising=False)
+    monkeypatch.delenv("QBITLARR_EXTRA_SAVE_PATHS", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.qbitlarr_save_path_movie == "/downloads/movies"
+    assert settings.qbitlarr_save_path_movie_4k == "/downloads/movies-4k"
+    assert settings.qbitlarr_save_path_tv == "/downloads/tv"
+    assert settings.qbitlarr_extra_save_paths is None
+
+
+def test_settings_accepts_custom_save_paths(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.setenv("QBITLARR_SAVE_PATH_MOVIE", "/media/Movies")
+    monkeypatch.setenv("QBITLARR_SAVE_PATH_MOVIE_4K", "/media/Movies 4K")
+    monkeypatch.setenv("QBITLARR_SAVE_PATH_TV", "/media/TV")
+    monkeypatch.setenv("QBITLARR_EXTRA_SAVE_PATHS", "/media/Kids,/media/Documentaries")
+
+    settings = Settings.from_env()
+
+    assert settings.qbitlarr_save_path_movie == "/media/Movies"
+    assert settings.qbitlarr_save_path_movie_4k == "/media/Movies 4K"
+    assert settings.qbitlarr_save_path_tv == "/media/TV"
+    assert settings.qbitlarr_extra_save_paths == ["/media/Kids", "/media/Documentaries"]
+
+
+def test_build_prowlarr_search_params_uses_query_search_by_default():
+    request = SearchRequest(query="ubuntu 24.04")
+
+    params = build_prowlarr_search_params(request)
+
+    assert params["query"] == "ubuntu 24.04"
+    assert params["type"] == "search"
+    assert params["limit"] == 50
+    assert params["offset"] == 0
+
+
+def test_build_prowlarr_search_params_includes_categories_when_provided():
+    request = SearchRequest(query="The Hitch-Hiker", categories=[2040])
+
+    params = build_prowlarr_search_params(request)
+
+    assert params["categories"] == [2040]
+
+
+def test_build_prowlarr_search_params_includes_indexer_ids_when_provided():
+    request = SearchRequest(query="The Hitch-Hiker", indexer_ids=[10, 20])
+
+    params = build_prowlarr_search_params(request)
+
+    assert params["indexerIds"] == [10, 20]
+
+
+def test_build_prowlarr_search_params_converts_known_identifiers():
+    request = SearchRequest(identifier="imdb:tt0045877", query="season 2")
+
+    params = build_prowlarr_search_params(request)
+
+    assert params["query"] == "tt0045877 season 2"
+
+
+def test_build_prowlarr_search_params_converts_imdb_url_identifier():
+    request = SearchRequest(identifier="https://www.imdb.com/title/tt0045877/?ref_=ext_shr_lnk")
+
+    params = build_prowlarr_search_params(request)
+
+    assert params["query"] == "tt0045877"
+
+
+def test_build_prowlarr_search_params_converts_imdb_url_query():
+    request = SearchRequest(query="https://m.imdb.com/title/tt0045877/?utm_source=whatsapp")
+
+    params = build_prowlarr_search_params(request)
+
+    assert params["query"] == "tt0045877"
+
+
+def test_normalize_search_results_filters_duplicates_and_invalid_links():
+    raw_results = [
+        {
+            "title": "First",
+            "downloadUrl": "/api/v1/indexer/1/download?link=abc",
+            "size": 100,
+            "seeders": 10,
+            "leechers": 2,
+            "indexer": "Indexer A",
+        },
+        {
+            "title": "Duplicate",
+            "downloadUrl": "/api/v1/indexer/1/download?link=abc",
+            "size": 100,
+            "seeders": 9,
+            "leechers": 1,
+            "indexer": "Indexer B",
+        },
+        {"title": "Missing Link", "size": 50, "indexer": "Indexer C"},
+        {
+            "title": "Magnet",
+            "magnetUrl": "magnet:?xt=urn:btih:abcdef",
+            "size": 200,
+            "seeders": 5,
+            "leechers": 0,
+            "indexer": "Indexer D",
+        },
+    ]
+    raw_results.extend(
+        {
+            "title": f"Extra {index}",
+            "downloadUrl": f"https://example.test/{index}.torrent",
+            "size": index,
+            "indexer": "Indexer E",
+        }
+        for index in range(25)
+    )
+
+    normalized = normalize_search_results(
+        raw_results,
+        prowlarr_url="http://prowlarr:9696",
+        prowlarr_api_key="secret",
+    )
+
+    assert len(normalized) == 27
+    assert normalized[0].title == "First"
+    assert normalized[0].download_link == "http://prowlarr:9696/api/v1/indexer/1/download?link=abc"
+    assert normalized[1].download_link == "magnet:?xt=urn:btih:abcdef"
+    assert len({item.download_link for item in normalized}) == len(normalized)
+
+
+def test_normalize_search_results_rewrites_prowlarr_download_links_to_download_base():
+    raw_results = [
+        {
+            "title": "Night of the Living Dead",
+            "downloadUrl": "/4/download?link=abc&file=Night+of+the+Living+Dead",
+            "size": 100,
+            "seeders": 10,
+        },
+        {
+            "title": "The Hitch-Hiker",
+            "downloadUrl": "http://prowlarr:9696/4/download?link=def&file=The+Hitch-Hiker",
+            "size": 100,
+            "seeders": 10,
+        },
+    ]
+
+    normalized = normalize_search_results(
+        raw_results,
+        prowlarr_url="http://prowlarr:9696",
+        prowlarr_download_url="http://192.0.2.10:9696",
+        prowlarr_api_key="secret",
+    )
+
+    assert normalized[0].download_link == "http://192.0.2.10:9696/4/download?link=abc&file=Night+of+the+Living+Dead"
+    assert normalized[1].download_link == "http://192.0.2.10:9696/4/download?link=def&file=The+Hitch-Hiker"
+
+
+def test_normalize_search_results_prefers_actual_magnet_over_prowlarr_proxy_fields():
+    raw_results = [
+        {
+            "title": "Night of the Living Dead",
+            "magnetUrl": "http://prowlarr:9696/4/download?link=abc&file=Night+of+the+Living+Dead",
+            "guid": "magnet:?xt=urn:btih:abcdef",
+            "size": 100,
+            "seeders": 10,
+        }
+    ]
+
+    normalized = normalize_search_results(
+        raw_results,
+        prowlarr_url="http://prowlarr:9696",
+        prowlarr_download_url="http://192.0.2.10:9696",
+        prowlarr_api_key="secret",
+    )
+
+    assert normalized[0].download_link == "magnet:?xt=urn:btih:abcdef"
+
+
+def test_normalize_search_results_prefers_download_url_over_html_guid():
+    raw_results = [
+        {
+            "title": "Within Our Gates",
+            "downloadUrl": "http://prowlarr:9696/1/download?link=abc&file=Within+Our+Gates",
+            "guid": "https://example.test/torrent/within-our-gates",
+            "size": 100,
+            "seeders": 10,
+        }
+    ]
+
+    normalized = normalize_search_results(
+        raw_results,
+        prowlarr_url="http://prowlarr:9696",
+        prowlarr_download_url="http://192.0.2.10:9696",
+        prowlarr_api_key="secret",
+    )
+
+    assert normalized[0].download_link == "http://192.0.2.10:9696/1/download?link=abc&file=Within+Our+Gates"
+
+
+def test_download_request_accepts_http_https_magnet_and_rejects_other_schemes():
+    assert DownloadRequest(download_link="https://example.test/file.torrent")
+    assert DownloadRequest(download_link="magnet:?xt=urn:btih:abcdef")
+
+    with pytest.raises(ValueError):
+        DownloadRequest(download_link="file:///etc/passwd")
+
+
+def test_download_request_accepts_optional_save_path():
+    request = DownloadRequest(
+        download_link="magnet:?xt=urn:btih:abcdef",
+        save_path="  /media/Kids  ",
+    )
+
+    assert request.save_path == "/media/Kids"
+
+
+def test_handle_request_accepts_optional_save_path():
+    request = HandleRequest(user_message="tt0045877", save_path="  /media/Kids  ")
+
+    assert request.save_path == "/media/Kids"
+
+
+def test_normalize_download_link_rejects_blank_links():
+    with pytest.raises(ValueError):
+        normalize_download_link("   ")
+
+
+def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path):
+    queued: dict[str, str | None] = {}
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["download_link"] = download_link
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=["/media/Kids"],
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={
+            "download_link": "magnet:?xt=urn:btih:abcdef",
+            "save_path": "/media/Kids",
+        },
+    )
+
+    assert response.status_code == 200
+    assert queued == {
+        "download_link": "magnet:?xt=urn:btih:abcdef",
+        "save_path": "/media/Kids",
+    }
+
+
+def test_download_endpoint_rejects_save_path_outside_allowed_roots(monkeypatch):
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        raise AssertionError("download should not be queued")
+
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={
+            "download_link": "magnet:?xt=urn:btih:abcdef",
+            "save_path": "/media/Kids",
+        },
+    )
+
+    assert response.status_code == 400
+
+
+def test_api_key_auth_blocks_requests_without_matching_header(monkeypatch):
+    monkeypatch.setenv("QBITLARR_API_KEY", "secret-key")
+
+    client = TestClient(app)
+
+    assert client.get("/health").status_code == 401
+    assert client.get("/health", headers={"X-API-Key": "wrong"}).status_code == 401
+    assert client.get("/health", headers={"X-API-Key": "secret-key"}).status_code == 200
+
+
+def test_deep_health_reports_dependency_status(monkeypatch):
+    async def fake_prowlarr_health(settings):
+        return {"status": "ok"}
+
+    async def fake_qbittorrent_health(settings):
+        return {"status": "ok"}
+
+    monkeypatch.setattr("app.main.get_settings", lambda: object())
+    monkeypatch.setattr("app.main.check_prowlarr_health", fake_prowlarr_health, raising=False)
+    monkeypatch.setattr("app.main.check_qbittorrent_health", fake_qbittorrent_health, raising=False)
+
+    client = TestClient(app)
+    response = client.get("/health?deep=true")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "service": "qBitlarr API",
+        "dependencies": {
+            "prowlarr": {"status": "ok"},
+            "qbittorrent": {"status": "ok"},
+        },
+    }
+
+
+def test_deep_health_returns_503_when_dependency_fails(monkeypatch):
+    async def fake_prowlarr_health(settings):
+        return {"status": "error", "detail": "Prowlarr is unreachable"}
+
+    async def fake_qbittorrent_health(settings):
+        return {"status": "ok"}
+
+    monkeypatch.setattr("app.main.get_settings", lambda: object())
+    monkeypatch.setattr("app.main.check_prowlarr_health", fake_prowlarr_health, raising=False)
+    monkeypatch.setattr("app.main.check_qbittorrent_health", fake_qbittorrent_health, raising=False)
+
+    client = TestClient(app)
+    response = client.get("/health?deep=true")
+
+    assert response.status_code == 503
+    assert response.json()["status"] == "degraded"
+    assert response.json()["dependencies"]["prowlarr"]["detail"] == "Prowlarr is unreachable"
+
+
+def test_prowlarr_indexers_endpoint_returns_discoverable_indexer_ids(monkeypatch):
+    import app.api.prowlarr as prowlarr_api
+
+    async def fake_list_indexers(settings):
+        return [
+            {
+                "id": 10,
+                "name": "Trusted Indexer",
+                "enabled": True,
+                "protocol": "torrent",
+            }
+        ]
+
+    monkeypatch.setattr(prowlarr_api, "get_settings", lambda: object())
+    monkeypatch.setattr(prowlarr_api, "list_prowlarr_indexers", fake_list_indexers)
+
+    client = TestClient(app)
+    response = client.get("/prowlarr/indexers")
+
+    assert response.status_code == 200
+    assert response.json() == [
+        {
+            "id": 10,
+            "name": "Trusted Indexer",
+            "enabled": True,
+            "protocol": "torrent",
+        }
+    ]
+
+
+def test_mcp_mount_exposes_same_qbitlarr_operations_as_stdio_server():
+    openapi = app.openapi()
+    handle_operation = openapi["paths"]["/handle"]["post"]
+    snapshot_operation = openapi["paths"]["/queries/{query_id}"]["get"]
+    qbitlarr_operations = {
+        operation.get("operationId")
+        for path, methods in openapi["paths"].items()
+        for operation in methods.values()
+        if isinstance(operation, dict) and operation.get("operationId", "").startswith("qbitlarr_")
+    }
+
+    assert handle_operation["operationId"] == "qbitlarr_handle"
+    assert snapshot_operation["operationId"] == "qbitlarr_get_query_snapshot"
+    assert qbitlarr_operations == {
+        "qbitlarr_download",
+        "qbitlarr_get_query_snapshot",
+        "qbitlarr_handle",
+        "qbitlarr_health",
+        "qbitlarr_list_downloads",
+        "qbitlarr_list_prowlarr_indexers",
+        "qbitlarr_search",
+    }
+    assert any(getattr(route, "path", "") == "/mcp" for route in app.routes)
