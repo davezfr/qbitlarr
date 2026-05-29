@@ -127,9 +127,11 @@ def test_mcp_wrapper_registers_watch_from_download_status_payload():
         "status": "success",
         "action": "auto_download",
         "title": "Example Movie",
+        "message": "Example Movie is now downloading with 12 seeders. You can ask for a status update any time.",
         "download_status": {
             "hash": "abcdef1234567890",
             "name": "Example.Movie.2026.1080p.WEB-DL.H.264-GRP",
+            "seeds": 12,
         },
     }
 
@@ -150,4 +152,75 @@ def test_mcp_wrapper_registers_watch_from_download_status_payload():
             "requester_id": "user-a",
         }
     ]
+    assert payload["message"] == (
+        "Example Movie is now downloading with 12 seeders. "
+        "You'll be notified when it finishes. "
+        "You can ask for a status update any time."
+    )
     assert payload["notification_watch"]["status"] == "watching"
+
+
+def test_mcp_wrapper_defaults_notification_target_to_requester_id():
+    notifier = FakeNotifier()
+    payload = {
+        "status": "success",
+        "action": "auto_download",
+        "title": "Example Movie",
+        "message": "Example Movie is now downloading with 12 seeders. You can ask for a status update any time.",
+        "download_status": {
+            "hash": "abcdef1234567890",
+            "name": "Example.Movie.2026.1080p.WEB-DL.H.264-GRP",
+            "seeds": 12,
+        },
+    }
+
+    asyncio.run(
+        _maybe_register_completion_watch(
+            notifier,
+            payload=payload,
+            notification_target=None,
+            requester_id="telegram:28568871",
+        )
+    )
+
+    assert notifier.watches == [
+        {
+            "info_hash": "abcdef1234567890",
+            "title": "Example Movie",
+            "notification_target": "telegram:28568871",
+            "requester_id": "telegram:28568871",
+        }
+    ]
+    assert payload["message"] == (
+        "Example Movie is now downloading with 12 seeders. "
+        "You'll be notified when it finishes. "
+        "You can ask for a status update any time."
+    )
+    assert payload["notification_watch"]["status"] == "watching"
+
+
+def test_mcp_wrapper_skips_default_notification_for_non_target_requester_id():
+    notifier = FakeNotifier()
+    payload = {
+        "status": "success",
+        "action": "auto_download",
+        "title": "Example Movie",
+        "message": "Example Movie is now downloading with 12 seeders. You can ask for a status update any time.",
+        "download_status": {
+            "hash": "abcdef1234567890",
+            "name": "Example.Movie.2026.1080p.WEB-DL.H.264-GRP",
+            "seeds": 12,
+        },
+    }
+
+    asyncio.run(
+        _maybe_register_completion_watch(
+            notifier,
+            payload=payload,
+            notification_target=None,
+            requester_id="friend-a",
+        )
+    )
+
+    assert notifier.watches == []
+    assert "notification_watch" not in payload

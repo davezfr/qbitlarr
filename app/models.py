@@ -28,6 +28,13 @@ def normalize_optional_save_path(save_path: str | None) -> str | None:
     return path or None
 
 
+def normalize_optional_user_id(user_id: str | None) -> str | None:
+    if user_id is None:
+        return None
+    normalized = user_id.strip()
+    return normalized or None
+
+
 class SearchRequest(BaseModel):
     identifier: str | None = Field(default=None, description="Optional media ID")
     query: str | None = Field(default=None, description="Optional search keywords")
@@ -51,6 +58,10 @@ class SearchResult(BaseModel):
 class DownloadRequest(BaseModel):
     download_link: str
     save_path: str | None = Field(default=None, description="Optional qBittorrent save path override")
+    user_id: str | None = Field(
+        default=None,
+        description="Optional requester identifier used for multi-user torrent tagging",
+    )
 
     @field_validator("download_link")
     @classmethod
@@ -61,6 +72,11 @@ class DownloadRequest(BaseModel):
     @classmethod
     def validate_save_path(cls, value: str | None) -> str | None:
         return normalize_optional_save_path(value)
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_id(cls, value: str | None) -> str | None:
+        return normalize_optional_user_id(value)
 
 
 class TorrentStatus(BaseModel):
@@ -108,10 +124,7 @@ class HandleRequest(BaseModel):
     @field_validator("user_id")
     @classmethod
     def validate_user_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        user_id = value.strip()
-        return user_id or None
+        return normalize_optional_user_id(value)
 
     @field_validator("save_path")
     @classmethod

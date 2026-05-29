@@ -99,13 +99,13 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 </table>
 
 > **You:** *Download The Hitch-Hiker.*
-> **Agent:** Started auto-downloading The Hitch-Hiker in 1080p WEB-DL H.264.
+> **Agent:** The Hitch-Hiker is now downloading with 9 seeders. You can ask for a status update any time.
 
 > **You:** *Download tt0045877 from IMDb.*
-> **Agent:** Started auto-downloading The Hitch-Hiker in 1080p WEB-DL H.264.
+> **Agent:** The Hitch-Hiker is now downloading with 9 seeders. You can ask for a status update any time.
 
 > **You:** *I want The Hitch-Hiker in 4K.*
-> **Agent:** Started auto-downloading The Hitch-Hiker in 2160p UHD BluRay REMUX H.265.
+> **Agent:** The Hitch-Hiker is now downloading with 50 seeders. You can ask for a status update any time.
 
 > **You:** *What's downloading right now?*
 > **Agent:** The Hitch-Hiker — 42% — downloading at 8.4 MB/s · ETA 6 minutes
@@ -116,7 +116,7 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 >   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 >   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
 
-Behind the scenes: when the agent gets a clear title, it auto-picks the best 1080p release that has enough seeders and queues it in your qBittorrent. When the title is ambiguous (just a free-text search), it returns a ranked list and waits for your pick. Status answers come from `qbitlarr_list_downloads`, which streams the live qBittorrent state — progress, speed, ETA, seeders. You can always say *"4K"*, *"Remux"*, or *"720p HEVC"* to override the default quality.
+Behind the scenes: when the agent gets a clear title, it auto-picks the best 1080p release that has enough seeders and queues it in your qBittorrent. When the title is ambiguous (just a free-text search), it returns a ranked list and waits for your pick. Status answers come from `qbitlarr_list_downloads`, which streams the live qBittorrent state — progress, speed, ETA, seeders. In shared-bot setups, pass a stable per-user `user_id` / `requester_id` such as `telegram:<current user id>` so qBitlarr tags each torrent and status checks can be limited to that user's own downloads. You can always say *"4K"*, *"Remux"*, or *"720p HEVC"* to override the default quality.
 
 ### Pro tip: share straight from the IMDb app
 
@@ -211,6 +211,26 @@ End users override per-request just by saying so in natural language:
 
 Override the server-wide default with `QBITLARR_DEFAULT_MODE=auto|manual|confirm`. Auto-download responses always include an `alternatives` list with 2–3 runner-ups so an agent can offer "or did you mean..." without a second tool call.
 
+## Optional Torrent Retention
+
+qBitlarr can optionally set per-torrent cleanup limits in qBittorrent when a download is added. qBitlarr does not run its own deletion loop here; it just writes the policy onto the torrent, and qBittorrent removes the torrent task later while keeping the actual downloaded files.
+
+Disabled by default for open-source users. Enable and tune it with env vars:
+
+```sh
+QBITLARR_RETENTION_ENABLED=false
+QBITLARR_RETENTION_RATIO_LIMIT=2
+QBITLARR_RETENTION_SEEDING_TIME_LIMIT_MINUTES=10080
+QBITLARR_RETENTION_ACTION=Remove   # Stop | Remove | RemoveWithContent | EnableSuperSeeding
+```
+
+Notes:
+
+- `QBITLARR_RETENTION_RATIO_LIMIT=2` means remove the torrent task after ratio 2.0.
+- `QBITLARR_RETENTION_SEEDING_TIME_LIMIT_MINUTES=10080` means remove the torrent task after 7 days of seeding time.
+- Leave either threshold blank to disable just that one.
+- `Remove` deletes only the qBittorrent task; `RemoveWithContent` would also delete files, which most media-library users do not want.
+
 ## Connect To An Agent
 
 qBitlarr ships as an **MCP server**, so any agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io) — Claude Desktop, Cursor, Cline, Hermes, OpenClaw, ChatGPT via an MCP bridge, your own custom agent — can use it.
@@ -224,7 +244,7 @@ Two transports are available:
 
 Tools exposed by both: `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_download_status`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
 
-The stdio MCP wrapper also supports one-time completion notifications for Hermes-style messaging targets. Pass `notification_target` when queueing a torrent, such as `telegram:123456789`, and qBitlarr will watch that torrent hash and send that same target a short message when the download reaches 100%. For manual flows, agents can also call `qbitlarr_watch_download` with a known torrent hash.
+The stdio MCP wrapper also supports one-time completion notifications for Hermes-style messaging targets. Pass `notification_target` when queueing a torrent, such as `telegram:123456789`, and qBitlarr will watch that torrent hash and send that same target a short message when the download reaches 100%. If `user_id` / `requester_id` is already a Hermes target like `telegram:<current user id>`, qBitlarr reuses it automatically for completion notifications, so multi-user bots usually do not need to pass `notification_target` separately. The same per-user `user_id` / `requester_id` also scopes follow-up status checks to that user's tagged torrents. For manual flows, agents can also call `qbitlarr_watch_download` with a known torrent hash.
 
 If `QBITLARR_API_KEY` is set, both transports require an `X-API-Key` header. The stdio MCP picks it up from the same env var.
 
@@ -290,11 +310,12 @@ The CLI is a thin client for the same REST API used by MCP. It reads `QBITLARR_A
 ```sh
 bin/qbitlarr handle "tt0045877"
 bin/qbitlarr handle "The Hitch-Hiker" --mode manual
+bin/qbitlarr handle "The Hitch-Hiker" --user-id telegram:123456789
 bin/qbitlarr handle "The Hitch-Hiker" --mode manual --json
 bin/qbitlarr search --query "The Hitch-Hiker 1953 1080p" | jq '.[0]'
-bin/qbitlarr download 'magnet:?xt=urn:btih:...'
-bin/qbitlarr downloads --watch
-bin/qbitlarr download-status abcdef1234567890
+bin/qbitlarr download 'magnet:?xt=urn:btih:...' --user-id telegram:123456789
+bin/qbitlarr downloads --watch --user-id telegram:123456789
+bin/qbitlarr download-status abcdef1234567890 --user-id telegram:123456789
 bin/qbitlarr health --deep
 bin/qbitlarr indexers
 ```

@@ -306,16 +306,17 @@ def test_handle_imdb_id_auto_downloads_best_movie_to_movie_path(monkeypatch, tmp
             _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=9, link_suffix="h264"),
         ]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
+        queued["requester_id"] = requester_id
 
     monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
     monkeypatch.setattr("app.api.handle.add_download_to_qbittorrent", fake_add_download)
     monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
 
     client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "tt0045877"})
+    response = client.post("/handle", json={"user_message": "tt0045877", "user_id": "telegram:28568871"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -323,11 +324,15 @@ def test_handle_imdb_id_auto_downloads_best_movie_to_movie_path(monkeypatch, tmp
     assert payload["action"] == "auto_download"
     assert payload["title"] == "The Hitch-Hiker (1953)"
     assert payload["quality"] == "1080p WEB-DL H.264"
-    assert payload["message"] == "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264..."
+    assert payload["message"] == (
+        "The Hitch-Hiker (1953) is now downloading with 9 seeders. "
+        "You can ask for a status update any time."
+    )
     _assert_english_message(payload)
     assert queued == {
         "download_link": "https://example.test/h264.torrent",
         "save_path": "/downloads/movies",
+        "requester_id": "telegram:28568871",
     }
 
 
@@ -339,7 +344,7 @@ def test_handle_imdb_id_auto_downloads_4k_movie_to_4k_movie_path(monkeypatch, tm
         assert request.categories == [2000, 5000]
         return [_result("The.Hitch-Hiker.1953.2160p.UHD.BluRay.REMUX.H.265-GRP", seeders=50, link_suffix="2160")]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
 
@@ -366,7 +371,7 @@ def test_handle_imdb_id_auto_downloads_tv_to_tv_path(monkeypatch, tmp_path):
         assert request.categories == [2040, 5040]
         return [_result("Example.Show.S03.1080p.AMZN.WEB-DL.H.264-GRP", seeders=50, link_suffix="tv")]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
 
@@ -392,7 +397,7 @@ def test_handle_imdb_id_save_path_override_takes_precedence(monkeypatch, tmp_pat
         assert request.query == "tt0045877"
         return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=50, link_suffix="h264")]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
 
@@ -414,12 +419,12 @@ def test_handle_imdb_id_save_path_override_takes_precedence(monkeypatch, tmp_pat
     }
 
 
-def test_handle_imdb_id_auto_download_message_includes_qbittorrent_status_eta(monkeypatch, tmp_path):
+def test_handle_imdb_id_auto_download_message_uses_selected_seeders_not_transient_qbittorrent_status(monkeypatch, tmp_path):
     async def fake_search_prowlarr(request, settings):
         assert request.query == "tt0045877"
         return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=50, link_suffix="h264")]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         return TorrentStatus(
             name="The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP",
             state="downloading",
@@ -441,10 +446,10 @@ def test_handle_imdb_id_auto_download_message_includes_qbittorrent_status_eta(mo
     assert response.status_code == 200
     payload = response.json()
     message = payload["message"]
-    assert "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264." in message
-    assert "qBittorrent status: downloading, 25.0% complete" in message
-    assert "2.0 MB/s" in message
-    assert "estimated finish in about 10 minutes" in message
+    assert message == (
+        "The Hitch-Hiker (1953) is now downloading with 50 seeders. "
+        "You can ask for a status update any time."
+    )
     assert payload["download_status"] == {
         "name": "The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP",
         "state": "downloading",
@@ -457,26 +462,20 @@ def test_handle_imdb_id_auto_download_message_includes_qbittorrent_status_eta(mo
     }
 
 
-def test_auto_download_message_ignores_placeholder_eta_when_torrent_has_no_speed():
+def test_auto_download_message_keeps_existing_download_copy_short():
     message = _auto_download_message(
         "Within Our Gates (1920)",
-        "1080p WEB-DL H.264",
-        TorrentStatus(
-            name="Jojo.Rabbit.2019.1080p.AMZN.WEB-DL.H.264-GRP",
-            state="stalledDL",
-            progress=0.0,
-            size=8_000_000_000,
-            seeds=0,
-            hash="abcdef",
-            download_speed=0,
-            eta=8_640_000,
-        ),
+        1,
         already_downloading=True,
     )
 
-    assert "qBittorrent status: stalled, 0.0% complete" in message
-    assert "ETA unavailable until peers connect" in message
-    assert "100 days" not in message
+    assert message == "Within Our Gates (1920) is already in the system with 1 seeder. You can ask for a status update any time."
+
+
+def test_auto_download_message_omits_seeder_count_when_unknown():
+    message = _auto_download_message("Within Our Gates (1920)", None)
+
+    assert message == "Within Our Gates (1920) is now downloading. You can ask for a status update any time."
 
 
 def test_handle_imdb_id_refines_by_title_before_auto_download(monkeypatch, tmp_path):
@@ -491,7 +490,7 @@ def test_handle_imdb_id_refines_by_title_before_auto_download(monkeypatch, tmp_p
             return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=9, link_suffix="h264")]
         raise AssertionError(f"unexpected query: {request.query}")
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
 
@@ -525,7 +524,7 @@ def test_handle_imdb_id_uses_torrent_metadata_title_for_auto_selection(monkeypat
             return "The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GOOD"
         return None
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
 
@@ -577,6 +576,7 @@ def test_verified_auto_selection_checks_initial_metadata_batch_concurrently(monk
 
 def test_handle_imdb_id_returns_existing_matching_download_without_readding(monkeypatch, tmp_path):
     search_queries: list[str] = []
+    tagged: list[tuple[str, str | None]] = []
 
     async def fake_search_prowlarr(request, settings):
         search_queries.append(request.query)
@@ -596,16 +596,21 @@ def test_handle_imdb_id_returns_existing_matching_download_without_readding(monk
             )
         ]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         raise AssertionError("existing qBittorrent match should not be added again")
+
+    async def fake_tag_download(settings, info_hash, requester_id):
+        tagged.append((info_hash, requester_id))
+        return "requester.telegram-28568871"
 
     monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
     monkeypatch.setattr("app.api.handle.list_downloads_from_qbittorrent", fake_list_downloads, raising=False)
     monkeypatch.setattr("app.api.handle.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr("app.api.handle.tag_download_for_requester", fake_tag_download)
     monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
 
     client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "tt0045877"})
+    response = client.post("/handle", json={"user_message": "tt0045877", "user_id": "telegram:28568871"})
 
     assert response.status_code == 200
     payload = response.json()
@@ -614,6 +619,7 @@ def test_handle_imdb_id_returns_existing_matching_download_without_readding(monk
     assert payload["quality"] == "1080p WEB-DL H.264"
     assert payload["snapshot_status"] == "already_in_qbittorrent"
     assert search_queries == ["tt0045877"]
+    assert tagged == [("abcdef", "telegram:28568871")]
 
 
 def test_handle_imdb_shared_url_searches_embedded_id_as_keyword(monkeypatch, tmp_path):
@@ -625,7 +631,7 @@ def test_handle_imdb_shared_url_searches_embedded_id_as_keyword(monkeypatch, tmp
         assert request.categories == [2040, 5040]
         return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=50, link_suffix="h264")]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
 
@@ -771,7 +777,7 @@ def test_handle_auto_download_includes_alternatives_inline(monkeypatch, tmp_path
             _result("The.Hitch-Hiker.1953.1080p.WEBRip.H.264-GRP", seeders=20, link_suffix="webrip"),
         ]
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         return None
 
     monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)

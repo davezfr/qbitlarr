@@ -58,6 +58,9 @@ def create_mcp_server() -> FastMCP:
                 "2160p", "UHD", "720p", "480p", or "Remux" only when the
                 user explicitly asks for that quality.
             user_id: Optional caller identifier for logs and multi-user context.
+                When serving multiple people through one qBittorrent instance,
+                pass a stable chat/user ID so future status checks can be scoped
+                to that requester's tagged torrents.
             save_path: Optional qBittorrent save path override, such as
                 "/media/Kids". Leave unset to use qBitlarr's configured defaults.
             mode: Optional output mode. "auto" (default for IMDb input) picks
@@ -69,7 +72,9 @@ def create_mcp_server() -> FastMCP:
             notification_target: Optional Hermes send target, such as
                 "telegram:28568871". When set and the response includes a
                 torrent hash, qBitlarr will send that target a one-time
-                completion notification when the torrent reaches 100%.
+                completion notification when the torrent reaches 100%. When
+                omitted, qBitlarr reuses user_id if it already looks like a
+                Hermes send target.
         """
         payload = await get_qbitlarr_client().handle(
             user_message=user_message,
@@ -154,9 +159,17 @@ def create_mcp_server() -> FastMCP:
             notification_target: Optional Hermes send target, such as
                 "telegram:28568871". When set and qBitlarr can identify the
                 torrent hash, the requester gets a one-time completion notice.
-            requester_id: Optional stable user identifier stored with the watch.
+                When omitted, qBitlarr reuses requester_id if it already
+                looks like a Hermes send target.
+            requester_id: Optional stable user identifier. When set, qBitlarr
+                tags the torrent for requester-scoped status queries and stores
+                the same identifier with the completion watch.
         """
-        payload = await get_qbitlarr_client().download(download_link, save_path=save_path)
+        payload = await get_qbitlarr_client().download(
+            download_link,
+            save_path=save_path,
+            user_id=requester_id,
+        )
         await _maybe_register_completion_watch(
             notifier,
             payload=payload,
@@ -166,27 +179,31 @@ def create_mcp_server() -> FastMCP:
         return payload
 
     @mcp.tool()
-    async def qbitlarr_list_downloads() -> list[dict[str, Any]]:
+    async def qbitlarr_list_downloads(requester_id: str | None = None) -> list[dict[str, Any]]:
         """List all torrents currently tracked by qBittorrent.
 
         Returns each torrent's name, state, progress (0.0–1.0), size in bytes,
         number of seeds, and info hash. Call this after qbitlarr_download to confirm
         the torrent was accepted and to monitor its progress.
 
+        When requester_id is set, only torrents tagged for that requester are
+        returned. Use a stable chat/user identifier here for multi-user bots.
+
         Common state values: downloading, uploading (seeding), stalledDL,
         stalledUP, pausedDL, pausedUP, metaDL (fetching metadata), checkingDL.
         """
-        return await get_qbitlarr_client().list_downloads()
+        return await get_qbitlarr_client().list_downloads(user_id=requester_id)
 
     @mcp.tool()
-    async def qbitlarr_get_download_status(info_hash: str) -> dict[str, Any]:
+    async def qbitlarr_get_download_status(info_hash: str, requester_id: str | None = None) -> dict[str, Any]:
         """Read one qBittorrent torrent by info hash.
 
         Prefer this over qbitlarr_list_downloads when you already have the
         exact torrent hash from a previous qbitlarr_handle auto-download
-        response and want a reliable follow-up status check.
+        response and want a reliable follow-up status check. When requester_id
+        is set, the torrent must already be tagged for that requester.
         """
-        return await get_qbitlarr_client().get_download_status(info_hash)
+        return await get_qbitlarr_client().get_download_status(info_hash, user_id=requester_id)
 
     @mcp.tool()
     async def qbitlarr_watch_download(
@@ -242,7 +259,8 @@ async def _maybe_register_completion_watch(
     notification_target: str | None,
     requester_id: str | None,
 ) -> None:
-    if not notification_target:
+    resolved_target = _resolve_notification_target(notification_target, requester_id)
+    if not resolved_target:
         return
 
     download_status = payload.get("download_status")
@@ -257,9 +275,10 @@ async def _maybe_register_completion_watch(
     watch = await notifier.register_watch(
         info_hash=info_hash,
         title=title,
-        notification_target=notification_target,
+        notification_target=resolved_target,
         requester_id=requester_id,
     )
+    _add_completion_notice_to_message(payload)
     payload["notification_watch"] = {"status": "watching", "watch": watch}
 
 
@@ -267,6 +286,49 @@ def _string_value(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _add_completion_notice_to_message(payload: dict[str, Any]) -> None:
+    message = _string_value(payload.get("message"))
+    if not message:
+        return
+    if "notified when it finishes" in message.casefold():
+        return
+
+    status_hint = "You can ask for a status update any time."
+    completion_hint = "You'll be notified when it finishes."
+    if message.endswith(status_hint):
+        prefix = message[: -len(status_hint)].rstrip()
+        payload["message"] = f"{prefix} {completion_hint} {status_hint}".strip()
+        return
+
+    payload["message"] = f"{message} {completion_hint}"
+
+
+def _resolve_notification_target(
+    notification_target: str | None,
+    requester_id: str | None,
+) -> str | None:
+    explicit_target = _string_value(notification_target)
+    if explicit_target:
+        return explicit_target
+
+    requester_target = _string_value(requester_id)
+    if _looks_like_hermes_target(requester_target):
+        return requester_target
+
+    return None
+
+
+def _looks_like_hermes_target(value: str | None) -> bool:
+    if not value:
+        return False
+
+    platform, separator, target_ref = value.partition(":")
+    if not separator or not target_ref.strip():
+        return False
+
+    return all(char.isalnum() or char in {"_", "-"} for char in platform)
 
 
 async def run_mcp_server() -> None:

@@ -53,13 +53,16 @@ def build_parser() -> argparse.ArgumentParser:
     download_parser = subparsers.add_parser("download", help="Queue a known download link.")
     download_parser.add_argument("download_link", help="Magnet, http(s), or bc download link.")
     download_parser.add_argument("--save-path", help="Optional qBittorrent save path override.")
+    download_parser.add_argument("--user-id", help="Optional requester identifier used for torrent tagging.")
 
     downloads_parser = subparsers.add_parser("downloads", help="List qBittorrent downloads.")
+    downloads_parser.add_argument("--user-id", help="Optional requester identifier used to filter tagged torrents.")
     downloads_parser.add_argument("--watch", action="store_true", help="Repeat until interrupted.")
     downloads_parser.add_argument("--interval", type=float, default=5.0, help="Watch interval in seconds.")
 
     download_status_parser = subparsers.add_parser("download-status", help="Read one qBittorrent download by info hash.")
     download_status_parser.add_argument("info_hash", help="qBittorrent info hash.")
+    download_status_parser.add_argument("--user-id", help="Optional requester identifier used to enforce tag filtering.")
 
     health_parser = subparsers.add_parser("health", help="Check qBitlarr API health.")
     health_parser.add_argument("--deep", action="store_true", help="Also check Prowlarr and qBittorrent.")
@@ -132,15 +135,15 @@ async def _run_command(args: argparse.Namespace, client: QbitlarrApiClient, stdo
         return
 
     if args.command == "download":
-        _write_json(await client.download(args.download_link, save_path=args.save_path), stdout)
+        _write_json(await client.download(args.download_link, save_path=args.save_path, user_id=args.user_id), stdout)
         return
 
     if args.command == "downloads":
-        await _write_downloads(client, stdout, watch=args.watch, interval=args.interval)
+        await _write_downloads(client, stdout, watch=args.watch, interval=args.interval, user_id=args.user_id)
         return
 
     if args.command == "download-status":
-        _write_json(await client.get_download_status(args.info_hash), stdout)
+        _write_json(await client.get_download_status(args.info_hash, user_id=args.user_id), stdout)
         return
 
     if args.command == "health":
@@ -164,9 +167,10 @@ async def _write_downloads(
     *,
     watch: bool,
     interval: float,
+    user_id: str | None,
 ) -> None:
     while True:
-        _write_json(await client.list_downloads(), stdout)
+        _write_json(await client.list_downloads(user_id=user_id), stdout)
         stdout.flush()
         if not watch:
             return

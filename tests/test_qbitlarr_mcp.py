@@ -73,6 +73,7 @@ def test_qbitlarr_api_client_download_posts_expected_payload():
     assert json.loads(requests[0].content) == {
         "download_link": "magnet:?xt=urn:btih:abcdef",
         "save_path": "/media/Kids",
+        "user_id": None,
     }
 
 
@@ -88,7 +89,7 @@ def test_qbitlarr_api_client_handle_posts_expected_payload():
                 "action": "auto_download",
                 "title": "The Hitch-Hiker (1953)",
                 "quality": "1080p WEB-DL H.264",
-                "message": "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264...",
+                "message": "The Hitch-Hiker (1953) is now downloading with 9 seeders. You can ask for a status update any time.",
             },
         )
 
@@ -191,6 +192,34 @@ def test_qbitlarr_api_client_list_downloads_gets_downloads_endpoint():
     assert results[0]["progress"] == 0.42
 
 
+def test_qbitlarr_api_client_list_downloads_can_filter_by_user_id():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url == "http://qbitlarr.test/downloads?user_id=telegram%3A28568871"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "name": "Ubuntu 24.04",
+                    "state": "downloading",
+                    "progress": 0.42,
+                    "size": 1234567,
+                    "seeds": 10,
+                    "hash": "abcdef1234567890",
+                }
+            ],
+        )
+
+    client = QbitlarrApiClient(
+        api_url="http://qbitlarr.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    results = asyncio.run(client.list_downloads(user_id="telegram:28568871"))
+
+    assert results[0]["hash"] == "abcdef1234567890"
+
+
 def test_qbitlarr_api_client_get_download_status_gets_targeted_download_endpoint():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
@@ -216,6 +245,32 @@ def test_qbitlarr_api_client_get_download_status_gets_targeted_download_endpoint
 
     assert result["hash"] == "abcdef1234567890"
     assert result["state"] == "downloading"
+
+
+def test_qbitlarr_api_client_get_download_status_can_filter_by_user_id():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url == "http://qbitlarr.test/downloads/abcdef1234567890?user_id=telegram%3A28568871"
+        return httpx.Response(
+            200,
+            json={
+                "name": "Ubuntu 24.04",
+                "state": "downloading",
+                "progress": 0.42,
+                "size": 1234567,
+                "seeds": 10,
+                "hash": "abcdef1234567890",
+            },
+        )
+
+    client = QbitlarrApiClient(
+        api_url="http://qbitlarr.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(client.get_download_status("abcdef1234567890", user_id="telegram:28568871"))
+
+    assert result["hash"] == "abcdef1234567890"
 
 
 def test_qbitlarr_api_client_list_prowlarr_indexers_gets_indexer_endpoint():

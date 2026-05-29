@@ -14,6 +14,14 @@ from app.domain.quality import (
 from app.exceptions import ConfigurationError
 
 
+_RETENTION_ACTIONS = {
+    "stop": "Stop",
+    "remove": "Remove",
+    "removewithcontent": "RemoveWithContent",
+    "enablesuperseeding": "EnableSuperSeeding",
+}
+
+
 @dataclass(frozen=True)
 class Settings:
     prowlarr_url: str
@@ -36,6 +44,10 @@ class Settings:
     prefer_codec: str = DEFAULT_PREFER_CODEC
     min_seeders: int = MIN_AUTO_DOWNLOAD_SEEDERS
     default_mode: str = "auto"
+    retention_enabled: bool = False
+    retention_ratio_limit: float | None = 2.0
+    retention_seeding_time_limit_minutes: int | None = 10080
+    retention_action: str = "Remove"
 
     @property
     def quality_preferences(self) -> QualityPreferences:
@@ -69,6 +81,13 @@ class Settings:
             prefer_codec=_env_with_default("QBITLARR_PREFER_CODEC", DEFAULT_PREFER_CODEC),
             min_seeders=int(os.getenv("QBITLARR_MIN_SEEDERS", str(MIN_AUTO_DOWNLOAD_SEEDERS))),
             default_mode=_env_with_default("QBITLARR_DEFAULT_MODE", "auto").lower(),
+            retention_enabled=_env_bool("QBITLARR_RETENTION_ENABLED", False),
+            retention_ratio_limit=_optional_float_env("QBITLARR_RETENTION_RATIO_LIMIT", default=2.0),
+            retention_seeding_time_limit_minutes=_optional_int_env(
+                "QBITLARR_RETENTION_SEEDING_TIME_LIMIT_MINUTES",
+                default=10080,
+            ),
+            retention_action=_retention_action_env("QBITLARR_RETENTION_ACTION", "Remove"),
         )
 
 
@@ -98,6 +117,49 @@ def _env_with_default(name: str, default: str) -> str:
     if value is None or not value.strip():
         return default
     return value.strip()
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+
+    normalized = value.strip().casefold()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"Invalid boolean environment variable: {name}")
+
+
+def _optional_float_env(name: str, *, default: float | None = None) -> float | None:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    if not value.strip():
+        return None
+    return float(value.strip())
+
+
+def _optional_int_env(name: str, *, default: int | None = None) -> int | None:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    if not value.strip():
+        return None
+    return int(value.strip())
+
+
+def _retention_action_env(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+
+    normalized = value.strip().casefold()
+    action = _RETENTION_ACTIONS.get(normalized)
+    if action is None:
+        raise ConfigurationError(f"Invalid retention action environment variable: {name}")
+    return action
 
 
 def _optional_int_list(name: str) -> list[int] | None:

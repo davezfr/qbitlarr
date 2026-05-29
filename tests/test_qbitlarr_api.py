@@ -55,6 +55,44 @@ def test_settings_accepts_custom_save_paths(monkeypatch):
     assert settings.qbitlarr_extra_save_paths == ["/media/Kids", "/media/Documentaries"]
 
 
+def test_settings_retention_policy_defaults_to_disabled(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.delenv("QBITLARR_RETENTION_ENABLED", raising=False)
+    monkeypatch.delenv("QBITLARR_RETENTION_RATIO_LIMIT", raising=False)
+    monkeypatch.delenv("QBITLARR_RETENTION_SEEDING_TIME_LIMIT_MINUTES", raising=False)
+    monkeypatch.delenv("QBITLARR_RETENTION_ACTION", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.retention_enabled is False
+    assert settings.retention_ratio_limit == 2.0
+    assert settings.retention_seeding_time_limit_minutes == 10080
+    assert settings.retention_action == "Remove"
+
+
+def test_settings_accepts_custom_retention_policy(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.setenv("QBITLARR_RETENTION_ENABLED", "true")
+    monkeypatch.setenv("QBITLARR_RETENTION_RATIO_LIMIT", "1.5")
+    monkeypatch.setenv("QBITLARR_RETENTION_SEEDING_TIME_LIMIT_MINUTES", "4320")
+    monkeypatch.setenv("QBITLARR_RETENTION_ACTION", "remove")
+
+    settings = Settings.from_env()
+
+    assert settings.retention_enabled is True
+    assert settings.retention_ratio_limit == 1.5
+    assert settings.retention_seeding_time_limit_minutes == 4320
+    assert settings.retention_action == "Remove"
+
+
 def test_build_prowlarr_search_params_uses_query_search_by_default():
     request = SearchRequest(query="ubuntu 24.04")
 
@@ -243,6 +281,15 @@ def test_download_request_accepts_optional_save_path():
     assert request.save_path == "/media/Kids"
 
 
+def test_download_request_accepts_optional_user_id():
+    request = DownloadRequest(
+        download_link="magnet:?xt=urn:btih:abcdef",
+        user_id="  telegram:28568871  ",
+    )
+
+    assert request.user_id == "telegram:28568871"
+
+
 def test_handle_request_accepts_optional_save_path():
     request = HandleRequest(user_message="tt0045877", save_path="  /media/Kids  ")
 
@@ -257,9 +304,10 @@ def test_normalize_download_link_rejects_blank_links():
 def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path):
     queued: dict[str, str | None] = {}
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
+        queued["requester_id"] = requester_id
         return TorrentStatus(
             name="Example.Movie.2026.1080p.WEB-DL.H.264-GRP",
             state="downloading",
@@ -286,6 +334,7 @@ def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path
         json={
             "download_link": "magnet:?xt=urn:btih:abcdef",
             "save_path": "/media/Kids",
+            "user_id": "telegram:28568871",
         },
     )
 
@@ -294,11 +343,12 @@ def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path
     assert queued == {
         "download_link": "magnet:?xt=urn:btih:abcdef",
         "save_path": "/media/Kids",
+        "requester_id": "telegram:28568871",
     }
 
 
 def test_download_endpoint_rejects_save_path_outside_allowed_roots(monkeypatch):
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         raise AssertionError("download should not be queued")
 
     monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
@@ -411,8 +461,9 @@ def test_prowlarr_indexers_endpoint_returns_discoverable_indexer_ids(monkeypatch
 def test_download_status_endpoint_returns_targeted_torrent(monkeypatch):
     import app.api.downloads_list as downloads_api
 
-    async def fake_get_download_status(settings, info_hash):
+    async def fake_get_download_status(settings, info_hash, requester_id=None):
         assert info_hash == "abcdef1234567890"
+        assert requester_id is None
         return {
             "name": "Ubuntu 24.04",
             "state": "downloading",
@@ -427,6 +478,57 @@ def test_download_status_endpoint_returns_targeted_torrent(monkeypatch):
 
     client = TestClient(app)
     response = client.get("/downloads/abcdef1234567890")
+
+    assert response.status_code == 200
+    assert response.json()["hash"] == "abcdef1234567890"
+
+
+def test_downloads_endpoint_passes_user_filter_to_qbittorrent(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_list_downloads(settings, requester_id=None):
+        assert requester_id == "telegram:28568871"
+        return [
+            {
+                "name": "Ubuntu 24.04",
+                "state": "downloading",
+                "progress": 0.42,
+                "size": 1234567,
+                "seeds": 10,
+                "hash": "abcdef1234567890",
+            }
+        ]
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "list_downloads_from_qbittorrent", fake_list_downloads)
+
+    client = TestClient(app)
+    response = client.get("/downloads?user_id=telegram:28568871")
+
+    assert response.status_code == 200
+    assert response.json()[0]["hash"] == "abcdef1234567890"
+
+
+def test_download_status_endpoint_passes_user_filter_to_qbittorrent(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_get_download_status(settings, info_hash, requester_id=None):
+        assert info_hash == "abcdef1234567890"
+        assert requester_id == "telegram:28568871"
+        return {
+            "name": "Ubuntu 24.04",
+            "state": "downloading",
+            "progress": 0.42,
+            "size": 1234567,
+            "seeds": 10,
+            "hash": "abcdef1234567890",
+        }
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "get_download_status_from_qbittorrent", fake_get_download_status)
+
+    client = TestClient(app)
+    response = client.get("/downloads/abcdef1234567890?user_id=telegram:28568871")
 
     assert response.status_code == 200
     assert response.json()["hash"] == "abcdef1234567890"

@@ -51,11 +51,16 @@ class QbitlarrApiClient:
             raise QbitlarrApiError("qBitlarr API returned an unexpected search response")
         return response
 
-    async def download(self, download_link: str, save_path: str | None = None) -> dict[str, Any]:
+    async def download(
+        self,
+        download_link: str,
+        save_path: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         response = await self._request(
             "POST",
             "/download",
-            json={"download_link": download_link, "save_path": save_path},
+            json={"download_link": download_link, "save_path": save_path, "user_id": user_id},
         )
         if not isinstance(response, dict):
             raise QbitlarrApiError("qBitlarr API returned an unexpected download response")
@@ -91,14 +96,20 @@ class QbitlarrApiClient:
             raise QbitlarrApiError("qBitlarr API returned an unexpected health response")
         return response
 
-    async def list_downloads(self) -> list[dict[str, Any]]:
-        response = await self._request("GET", "/downloads")
+    async def list_downloads(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        kwargs: dict[str, Any] = {}
+        if user_id:
+            kwargs["params"] = {"user_id": user_id}
+        response = await self._request("GET", "/downloads", **kwargs)
         if not isinstance(response, list):
             raise QbitlarrApiError("qBitlarr API returned an unexpected downloads response")
         return response
 
-    async def get_download_status(self, info_hash: str) -> dict[str, Any]:
-        response = await self._request("GET", f"/downloads/{info_hash}")
+    async def get_download_status(self, info_hash: str, user_id: str | None = None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {}
+        if user_id:
+            kwargs["params"] = {"user_id": user_id}
+        response = await self._request("GET", f"/downloads/{info_hash}", **kwargs)
         if not isinstance(response, dict):
             raise QbitlarrApiError("qBitlarr API returned an unexpected download status response")
         return response
