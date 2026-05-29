@@ -52,7 +52,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     download_parser = subparsers.add_parser("download", help="Queue a known download link.")
     download_parser.add_argument("download_link", help="Magnet, http(s), or bc download link.")
-    download_parser.add_argument("--save-path", help="Optional qBittorrent save path override.")
+    download_parser.add_argument("--save-path", help="Optional qBittorrent save path override. Defaults to qBitlarr's inferred media path.")
     download_parser.add_argument("--user-id", help="Optional requester identifier used for torrent tagging.")
 
     downloads_parser = subparsers.add_parser("downloads", help="List qBittorrent downloads.")

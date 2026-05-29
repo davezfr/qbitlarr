@@ -338,7 +338,11 @@ Les auto-downloads de `/handle` choisissent un chemin selon le type de média et
 - `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`
 - `QBITLARR_SAVE_PATH_TV=/downloads/tv`
 
+Les téléchargements de séries créent un dossier par série sous le chemin TV de base, par exemple `/downloads/tv/Example Show`.
+
 `/handle` et `/download` acceptent aussi un champ optionnel `save_path` pour les remplacements ponctuels. Ces chemins doivent se trouver sous l'une des racines configurées ci-dessus, ou sous une entrée de `QBITLARR_EXTRA_SAVE_PATHS` séparée par des virgules, par exemple `/media/Kids`.
+
+Quand `save_path` est omis, `/handle` et `/download` utilisent les chemins par défaut configurés dans qBitlarr. `/download` déduit la destination depuis les métadonnées du torrent ou le display name du magnet, afin que les sélections manuelles issues des résultats de recherche arrivent aussi dans le chemin film, film 4K ou série, plutôt que dans le dossier global par défaut de qBittorrent.
 
 ## API REST
 

@@ -1,8 +1,10 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.download import _download_title_from_link
 from app.main import (
     DownloadRequest,
     HandleRequest,
@@ -345,6 +347,145 @@ def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path
         "save_path": "/media/Kids",
         "requester_id": "telegram:28568871",
     }
+
+
+def test_download_endpoint_infers_movie_save_path_when_save_path_is_omitted(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "The Hitch-Hiker 1953 1080p AMZN WEB-DL DDP2 0 H 264-GPRS"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["download_link"] = download_link
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "http://prowlarr.test/1/download"},
+    )
+
+    assert response.status_code == 200
+    assert queued == {
+        "download_link": "http://prowlarr.test/1/download",
+        "save_path": "/downloads/movies",
+    }
+
+
+def test_download_endpoint_infers_4k_movie_save_path_when_save_path_is_omitted(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "The Hitch-Hiker 1953 2160p UHD BluRay x265"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "http://prowlarr.test/1/download"},
+    )
+
+    assert response.status_code == 200
+    assert queued["save_path"] == "/downloads/movies-4k"
+
+
+def test_download_endpoint_infers_tv_save_path_when_save_path_is_omitted(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "Example Show S01E01 1080p WEB-DL H264"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "magnet:?xt=urn:btih:abcdef"},
+    )
+
+    assert response.status_code == 200
+    assert queued["save_path"] == "/downloads/tv/Example Show"
+
+
+def test_download_endpoint_sanitizes_inferred_tv_show_folder(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "Example/Show S01E01 1080p WEB-DL H264"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "magnet:?xt=urn:btih:abcdef"},
+    )
+
+    assert response.status_code == 200
+    assert queued["save_path"] == "/downloads/tv/Example Show"
+
+
+def test_download_title_from_link_reads_magnet_display_name():
+    title = asyncio.run(
+        _download_title_from_link(
+            "magnet:?xt=urn:btih:abcdef&dn=Example%20Show%20S01E01%201080p",
+            SimpleNamespace(),
+        )
+    )
+
+    assert title == "Example Show S01E01 1080p"
 
 
 def test_download_endpoint_rejects_save_path_outside_allowed_roots(monkeypatch):

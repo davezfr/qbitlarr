@@ -155,7 +155,8 @@ def create_mcp_server() -> FastMCP:
         Args:
             download_link: A download_link value returned by qbitlarr_search.
             save_path: Optional qBittorrent save path override, such as
-                "/media/Kids". Leave unset to use qBittorrent's default path.
+                "/media/Kids". Leave unset to use qBitlarr's inferred default
+                media path.
             notification_target: Optional Hermes send target, such as
                 "telegram:28568871". When set and qBitlarr can identify the
                 torrent hash, the requester gets a one-time completion notice.

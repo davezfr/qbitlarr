@@ -338,7 +338,11 @@ curl http://localhost:8000/prowlarr/indexers
 - `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`
 - `QBITLARR_SAVE_PATH_TV=/downloads/tv`
 
+剧集下载会在 TV base path 下创建剧名目录，例如 `/downloads/tv/Example Show`。
+
 `/handle` 和 `/download` 都接受可选的 `save_path` 字段，用于单次覆盖。覆盖路径必须位于上面配置的目录内，或位于逗号分隔的 `QBITLARR_EXTRA_SAVE_PATHS` 额外允许目录内，例如 `/media/Kids`。
+
+当省略 `save_path` 时，`/handle` 和 `/download` 会使用 qBitlarr 配置的默认路径。`/download` 会根据 torrent metadata 或 magnet display name 推断目标类型，所以从搜索结果里手动选择的下载也会进入电影、4K 电影或剧集路径，而不是落到 qBittorrent 的全局默认下载目录。
 
 ## REST API
 

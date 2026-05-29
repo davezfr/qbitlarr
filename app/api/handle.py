@@ -23,7 +23,7 @@ from app.domain.quality import (
     normalize_user_message,
     parse_quality,
 )
-from app.domain.save_paths import validate_save_path_override
+from app.domain.save_paths import default_save_path_for_title, validate_save_path_override
 from app.domain.torrent_metadata import parse_torrent_name
 from app.exceptions import ConfigurationError, UpstreamServiceError
 from app.models import HandleRequest, HandleResponse, ManualSearchResult, SearchRequest, SearchResult, TorrentStatus
@@ -41,9 +41,6 @@ logger = logging.getLogger("qbitlarr-api.handle")
 router = APIRouter()
 
 MANUAL_RESULT_LIMIT = 10
-DEFAULT_MOVIE_SAVE_PATH = "/downloads/movies"
-DEFAULT_MOVIE_4K_SAVE_PATH = "/downloads/movies-4k"
-DEFAULT_TV_SAVE_PATH = "/downloads/tv"
 MANUAL_RESULTS_MESSAGE = "Here are the top results, please reply with the number:"
 AUTO_FALLBACK_MESSAGE = "No suitable auto-download found. Here are the top results, please reply with the number:"
 DEFAULT_SEARCH_CATEGORIES = [2040, 5040]
@@ -440,11 +437,7 @@ def _save_path_for_download(
 ) -> str:
     if override:
         return validate_save_path_override(override, settings)
-    if media_type == "tv":
-        return getattr(settings, "qbitlarr_save_path_tv", DEFAULT_TV_SAVE_PATH)
-    if parse_quality(title).resolution == "2160p":
-        return getattr(settings, "qbitlarr_save_path_movie_4k", DEFAULT_MOVIE_4K_SAVE_PATH)
-    return getattr(settings, "qbitlarr_save_path_movie", DEFAULT_MOVIE_SAVE_PATH)
+    return default_save_path_for_title(settings=settings, media_type=media_type, title=title)
 
 
 def _preferences(settings: Settings) -> QualityPreferences:
