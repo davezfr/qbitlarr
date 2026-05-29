@@ -33,7 +33,12 @@ from app.models import (
     normalize_download_link,
 )
 from app.services.prowlarr import check_prowlarr_health, list_prowlarr_indexers, search_prowlarr
-from app.services.qbittorrent import add_download_to_qbittorrent, check_qbittorrent_health, list_downloads_from_qbittorrent
+from app.services.qbittorrent import (
+    add_download_to_qbittorrent,
+    check_qbittorrent_health,
+    get_download_status_from_qbittorrent,
+    list_downloads_from_qbittorrent,
+)
 
 
 logging.basicConfig(
@@ -106,6 +111,7 @@ async def health(deep: bool = False):
 QBITLARR_MCP_OPERATIONS = [
     "qbitlarr_download",
     "qbitlarr_get_query_snapshot",
+    "qbitlarr_get_download_status",
     "qbitlarr_handle",
     "qbitlarr_health",
     "qbitlarr_list_downloads",
@@ -144,6 +150,7 @@ __all__ = [
     "calculate_score",
     "get_categories",
     "get_settings",
+    "get_download_status_from_qbittorrent",
     "health",
     "list_prowlarr_indexers",
     "list_downloads_from_qbittorrent",

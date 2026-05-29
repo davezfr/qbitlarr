@@ -63,9 +63,21 @@ class DownloadRequest(BaseModel):
         return normalize_optional_save_path(value)
 
 
+class TorrentStatus(BaseModel):
+    name: str
+    state: str
+    progress: float
+    size: int
+    seeds: int
+    hash: str
+    download_speed: int | None = None
+    eta: int | None = None
+
+
 class DownloadResponse(BaseModel):
     status: Literal["success"] = "success"
     message: str = "Download queued"
+    download_status: TorrentStatus | None = None
 
 
 HandleMode = Literal["auto", "manual", "confirm"]
@@ -136,6 +148,7 @@ class HandleResponse(BaseModel):
     snapshot_status: str | None = None
     title: str | None = None
     quality: str | None = None
+    download_status: TorrentStatus | None = None
     results: list[ManualSearchResult] | None = None
     alternatives: list[ManualSearchResult] | None = Field(
         default=None,
@@ -160,17 +173,6 @@ class QuerySnapshot(BaseModel):
     updated_at: str
     request: dict
     snapshots: list[QuerySnapshotEntry]
-
-
-class TorrentStatus(BaseModel):
-    name: str
-    state: str
-    progress: float
-    size: int
-    seeds: int
-    hash: str
-    download_speed: int | None = None
-    eta: int | None = None
 
 
 class ProwlarrIndexer(BaseModel):

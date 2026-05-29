@@ -58,6 +58,9 @@ def build_parser() -> argparse.ArgumentParser:
     downloads_parser.add_argument("--watch", action="store_true", help="Repeat until interrupted.")
     downloads_parser.add_argument("--interval", type=float, default=5.0, help="Watch interval in seconds.")
 
+    download_status_parser = subparsers.add_parser("download-status", help="Read one qBittorrent download by info hash.")
+    download_status_parser.add_argument("info_hash", help="qBittorrent info hash.")
+
     health_parser = subparsers.add_parser("health", help="Check qBitlarr API health.")
     health_parser.add_argument("--deep", action="store_true", help="Also check Prowlarr and qBittorrent.")
 
@@ -134,6 +137,10 @@ async def _run_command(args: argparse.Namespace, client: QbitlarrApiClient, stdo
 
     if args.command == "downloads":
         await _write_downloads(client, stdout, watch=args.watch, interval=args.interval)
+        return
+
+    if args.command == "download-status":
+        _write_json(await client.get_download_status(args.info_hash), stdout)
         return
 
     if args.command == "health":

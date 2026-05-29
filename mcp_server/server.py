@@ -8,12 +8,14 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from app.client import get_qbitlarr_client
+from mcp_server.notifications import DownloadCompletionNotifier
 
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "WARNING").upper())
 logger = logging.getLogger("qbitlarr-mcp")
 
 def create_mcp_server() -> FastMCP:
+    notifier = DownloadCompletionNotifier.from_env()
     mcp = FastMCP(
         "qbitlarr",
         instructions=(
@@ -34,6 +36,7 @@ def create_mcp_server() -> FastMCP:
         user_id: str | None = None,
         save_path: str | None = None,
         mode: str | None = None,
+        notification_target: str | None = None,
     ) -> dict[str, Any]:
         """Main qBitlarr tool for normal users.
 
@@ -63,13 +66,24 @@ def create_mcp_server() -> FastMCP:
                 alternatives without queueing — use this when the user wants
                 to review before committing. Leave unset to use the server
                 default (QBITLARR_DEFAULT_MODE).
+            notification_target: Optional Hermes send target, such as
+                "telegram:28568871". When set and the response includes a
+                torrent hash, qBitlarr will send that target a one-time
+                completion notification when the torrent reaches 100%.
         """
-        return await get_qbitlarr_client().handle(
+        payload = await get_qbitlarr_client().handle(
             user_message=user_message,
             user_id=user_id,
             save_path=save_path,
             mode=mode,
         )
+        await _maybe_register_completion_watch(
+            notifier,
+            payload=payload,
+            notification_target=notification_target,
+            requester_id=user_id,
+        )
+        return payload
 
     @mcp.tool()
     async def qbitlarr_get_query_snapshot(query_id: str) -> dict[str, Any]:
@@ -119,7 +133,12 @@ def create_mcp_server() -> FastMCP:
         )
 
     @mcp.tool()
-    async def qbitlarr_download(download_link: str, save_path: str | None = None) -> dict[str, Any]:
+    async def qbitlarr_download(
+        download_link: str,
+        save_path: str | None = None,
+        notification_target: str | None = None,
+        requester_id: str | None = None,
+    ) -> dict[str, Any]:
         """Queue a torrent or magnet link in qBittorrent.
 
         Pass a download_link from qbitlarr_search results. Accepted schemes:
@@ -132,8 +151,19 @@ def create_mcp_server() -> FastMCP:
             download_link: A download_link value returned by qbitlarr_search.
             save_path: Optional qBittorrent save path override, such as
                 "/media/Kids". Leave unset to use qBittorrent's default path.
+            notification_target: Optional Hermes send target, such as
+                "telegram:28568871". When set and qBitlarr can identify the
+                torrent hash, the requester gets a one-time completion notice.
+            requester_id: Optional stable user identifier stored with the watch.
         """
-        return await get_qbitlarr_client().download(download_link, save_path=save_path)
+        payload = await get_qbitlarr_client().download(download_link, save_path=save_path)
+        await _maybe_register_completion_watch(
+            notifier,
+            payload=payload,
+            notification_target=notification_target,
+            requester_id=requester_id,
+        )
+        return payload
 
     @mcp.tool()
     async def qbitlarr_list_downloads() -> list[dict[str, Any]]:
@@ -147,6 +177,38 @@ def create_mcp_server() -> FastMCP:
         stalledUP, pausedDL, pausedUP, metaDL (fetching metadata), checkingDL.
         """
         return await get_qbitlarr_client().list_downloads()
+
+    @mcp.tool()
+    async def qbitlarr_get_download_status(info_hash: str) -> dict[str, Any]:
+        """Read one qBittorrent torrent by info hash.
+
+        Prefer this over qbitlarr_list_downloads when you already have the
+        exact torrent hash from a previous qbitlarr_handle auto-download
+        response and want a reliable follow-up status check.
+        """
+        return await get_qbitlarr_client().get_download_status(info_hash)
+
+    @mcp.tool()
+    async def qbitlarr_watch_download(
+        info_hash: str,
+        notification_target: str,
+        title: str | None = None,
+        requester_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a one-time completion notification for a torrent hash.
+
+        Use this when a user asks to be notified when a specific torrent
+        finishes. notification_target must be a Hermes send target such as
+        "telegram:28568871" so the notification goes back to the requesting
+        chat/user.
+        """
+        watch = await notifier.register_watch(
+            info_hash=info_hash,
+            title=title or info_hash,
+            notification_target=notification_target,
+            requester_id=requester_id,
+        )
+        return {"status": "watching", "watch": watch}
 
     @mcp.tool()
     async def qbitlarr_health(deep: bool = False) -> dict[str, Any]:
@@ -171,6 +233,40 @@ def create_mcp_server() -> FastMCP:
         return await get_qbitlarr_client().list_prowlarr_indexers()
 
     return mcp
+
+
+async def _maybe_register_completion_watch(
+    notifier: DownloadCompletionNotifier,
+    *,
+    payload: dict[str, Any],
+    notification_target: str | None,
+    requester_id: str | None,
+) -> None:
+    if not notification_target:
+        return
+
+    download_status = payload.get("download_status")
+    if not isinstance(download_status, dict):
+        return
+
+    info_hash = download_status.get("hash")
+    if not isinstance(info_hash, str) or not info_hash.strip():
+        return
+
+    title = _string_value(payload.get("title")) or _string_value(download_status.get("name")) or info_hash
+    watch = await notifier.register_watch(
+        info_hash=info_hash,
+        title=title,
+        notification_target=notification_target,
+        requester_id=requester_id,
+    )
+    payload["notification_watch"] = {"status": "watching", "watch": watch}
+
+
+def _string_value(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 async def run_mcp_server() -> None:

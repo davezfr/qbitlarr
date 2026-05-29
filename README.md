@@ -222,7 +222,9 @@ Two transports are available:
 - **stdio MCP** — what most desktop agent apps want. They launch `bin/qbitlarr-mcp` as a subprocess.
 - **HTTP MCP** — served at `http://localhost:8000/mcp` for hosts that prefer HTTP.
 
-Tools exposed by both: `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
+Tools exposed by both: `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_download_status`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
+
+The stdio MCP wrapper also supports one-time completion notifications for Hermes-style messaging targets. Pass `notification_target` when queueing a torrent, such as `telegram:123456789`, and qBitlarr will watch that torrent hash and send that same target a short message when the download reaches 100%. For manual flows, agents can also call `qbitlarr_watch_download` with a known torrent hash.
 
 If `QBITLARR_API_KEY` is set, both transports require an `X-API-Key` header. The stdio MCP picks it up from the same env var.
 
@@ -292,6 +294,7 @@ bin/qbitlarr handle "The Hitch-Hiker" --mode manual --json
 bin/qbitlarr search --query "The Hitch-Hiker 1953 1080p" | jq '.[0]'
 bin/qbitlarr download 'magnet:?xt=urn:btih:...'
 bin/qbitlarr downloads --watch
+bin/qbitlarr download-status abcdef1234567890
 bin/qbitlarr health --deep
 bin/qbitlarr indexers
 ```
@@ -350,6 +353,7 @@ Both `/handle` and `/download` also accept an optional `save_path` field for one
 | POST | `/search` | Raw Prowlarr search |
 | POST | `/download` | Queue a known download link |
 | GET | `/downloads` | List torrents in qBittorrent |
+| GET | `/downloads/{info_hash}` | Read one torrent by info hash |
 | GET | `/queries/{query_id}` | Re-read a saved search snapshot |
 | GET | `/prowlarr/indexers` | List Prowlarr indexers with IDs |
 

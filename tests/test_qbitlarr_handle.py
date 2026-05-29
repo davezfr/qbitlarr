@@ -439,11 +439,22 @@ def test_handle_imdb_id_auto_download_message_includes_qbittorrent_status_eta(mo
     response = client.post("/handle", json={"user_message": "tt0045877"})
 
     assert response.status_code == 200
-    message = response.json()["message"]
+    payload = response.json()
+    message = payload["message"]
     assert "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264." in message
     assert "qBittorrent status: downloading, 25.0% complete" in message
     assert "2.0 MB/s" in message
     assert "estimated finish in about 10 minutes" in message
+    assert payload["download_status"] == {
+        "name": "The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP",
+        "state": "downloading",
+        "progress": 0.25,
+        "size": 8_000_000_000,
+        "seeds": 12,
+        "hash": "abcdef",
+        "download_speed": 2_000_000,
+        "eta": 600,
+    }
 
 
 def test_auto_download_message_ignores_placeholder_eta_when_torrent_has_no_speed():

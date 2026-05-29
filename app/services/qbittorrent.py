@@ -234,6 +234,29 @@ async def list_downloads_from_qbittorrent(settings: Settings) -> list[TorrentSta
         raise UpstreamServiceError("qBittorrent API error") from exc
 
 
+async def get_download_status_from_qbittorrent(settings: Settings, info_hash: str) -> TorrentStatus | None:
+    def get_status_sync() -> TorrentStatus | None:
+        with qbittorrentapi.Client(
+            host=settings.qbit_url,
+            username=settings.qbit_username,
+            password=settings.qbit_password,
+        ) as qbit_client:
+            qbit_client.auth_log_in()
+            return _get_torrent_status(qbit_client, info_hash)
+
+    try:
+        return await asyncio.to_thread(get_status_sync)
+    except qbittorrentapi.LoginFailed as exc:
+        logger.warning("qBittorrent login failed")
+        raise UpstreamServiceError("qBittorrent login failed") from exc
+    except qbittorrentapi.APIConnectionError as exc:
+        logger.warning("qBittorrent request failed: %s", exc.__class__.__name__)
+        raise UpstreamServiceError("qBittorrent is unreachable") from exc
+    except qbittorrentapi.APIError as exc:
+        logger.warning("qBittorrent API error: %s", exc.__class__.__name__)
+        raise UpstreamServiceError("qBittorrent API error") from exc
+
+
 async def check_qbittorrent_health(settings: Settings) -> dict[str, str]:
     def check_sync() -> None:
         with qbittorrentapi.Client(

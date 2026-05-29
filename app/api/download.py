@@ -26,8 +26,8 @@ async def download(request: DownloadRequest) -> DownloadResponse:
     try:
         settings = get_settings()
         save_path = validate_save_path_override(request.save_path, settings)
-        await add_download_to_qbittorrent(request.download_link, settings, save_path=save_path)
-        return DownloadResponse()
+        download_status = await add_download_to_qbittorrent(request.download_link, settings, save_path=save_path)
+        return DownloadResponse(download_status=download_status)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ConfigurationError as exc:

@@ -13,6 +13,7 @@ from app.main import (
     normalize_download_link,
     normalize_search_results,
 )
+from app.models import TorrentStatus
 
 
 def test_settings_defaults_public_save_paths(monkeypatch):
@@ -259,6 +260,14 @@ def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path
     async def fake_add_download(download_link, settings, *, save_path=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
+        return TorrentStatus(
+            name="Example.Movie.2026.1080p.WEB-DL.H.264-GRP",
+            state="downloading",
+            progress=0.25,
+            size=1_000_000_000,
+            seeds=10,
+            hash="abcdef1234567890",
+        )
 
     monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
     monkeypatch.setattr(
@@ -281,6 +290,7 @@ def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path
     )
 
     assert response.status_code == 200
+    assert response.json()["download_status"]["hash"] == "abcdef1234567890"
     assert queued == {
         "download_link": "magnet:?xt=urn:btih:abcdef",
         "save_path": "/media/Kids",
@@ -398,6 +408,30 @@ def test_prowlarr_indexers_endpoint_returns_discoverable_indexer_ids(monkeypatch
     ]
 
 
+def test_download_status_endpoint_returns_targeted_torrent(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_get_download_status(settings, info_hash):
+        assert info_hash == "abcdef1234567890"
+        return {
+            "name": "Ubuntu 24.04",
+            "state": "downloading",
+            "progress": 0.42,
+            "size": 1234567,
+            "seeds": 10,
+            "hash": "abcdef1234567890",
+        }
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "get_download_status_from_qbittorrent", fake_get_download_status)
+
+    client = TestClient(app)
+    response = client.get("/downloads/abcdef1234567890")
+
+    assert response.status_code == 200
+    assert response.json()["hash"] == "abcdef1234567890"
+
+
 def test_mcp_mount_exposes_same_qbitlarr_operations_as_stdio_server():
     openapi = app.openapi()
     handle_operation = openapi["paths"]["/handle"]["post"]
@@ -413,6 +447,7 @@ def test_mcp_mount_exposes_same_qbitlarr_operations_as_stdio_server():
     assert snapshot_operation["operationId"] == "qbitlarr_get_query_snapshot"
     assert qbitlarr_operations == {
         "qbitlarr_download",
+        "qbitlarr_get_download_status",
         "qbitlarr_get_query_snapshot",
         "qbitlarr_handle",
         "qbitlarr_health",

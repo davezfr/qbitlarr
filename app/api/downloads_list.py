@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from app.config import get_settings
 from app.exceptions import ConfigurationError, UpstreamServiceError
 from app.models import TorrentStatus
-from app.services.qbittorrent import list_downloads_from_qbittorrent
+from app.services.qbittorrent import get_download_status_from_qbittorrent, list_downloads_from_qbittorrent
 
 
 logger = logging.getLogger("qbitlarr-api.downloads")
@@ -25,6 +25,27 @@ async def list_downloads() -> list[TorrentStatus]:
     try:
         settings = get_settings()
         return await list_downloads_from_qbittorrent(settings)
+    except ConfigurationError as exc:
+        logger.error("Configuration error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except UpstreamServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get(
+    "/downloads/{info_hash}",
+    response_model=TorrentStatus,
+    operation_id="qbitlarr_get_download_status",
+    summary="Get one qBittorrent download by info hash",
+    tags=["qbitlarr"],
+)
+async def get_download_status(info_hash: str) -> TorrentStatus:
+    try:
+        settings = get_settings()
+        status = await get_download_status_from_qbittorrent(settings, info_hash)
+        if status is None:
+            raise HTTPException(status_code=404, detail="Download not found")
+        return status
     except ConfigurationError as exc:
         logger.error("Configuration error: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

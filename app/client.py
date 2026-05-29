@@ -97,6 +97,12 @@ class QbitlarrApiClient:
             raise QbitlarrApiError("qBitlarr API returned an unexpected downloads response")
         return response
 
+    async def get_download_status(self, info_hash: str) -> dict[str, Any]:
+        response = await self._request("GET", f"/downloads/{info_hash}")
+        if not isinstance(response, dict):
+            raise QbitlarrApiError("qBitlarr API returned an unexpected download status response")
+        return response
+
     async def get_query_snapshot(self, query_id: str) -> dict[str, Any]:
         response = await self._request("GET", f"/queries/{query_id}")
         if not isinstance(response, dict):

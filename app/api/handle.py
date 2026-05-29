@@ -227,6 +227,7 @@ async def _handle_imdb_request(
             quality=quality,
             query_id=query_id,
             snapshot_status="already_in_qbittorrent",
+            download_status=existing_download,
             message=_auto_download_message(
                 display_title,
                 quality,
@@ -413,6 +414,7 @@ async def _handle_imdb_request(
         quality=quality,
         query_id=query_id,
         snapshot_status=snapshot_status,
+        download_status=download_status,
         message=_auto_download_message(display_title, quality, download_status),
         alternatives=alternatives,
     )

@@ -191,6 +191,33 @@ def test_qbitlarr_api_client_list_downloads_gets_downloads_endpoint():
     assert results[0]["progress"] == 0.42
 
 
+def test_qbitlarr_api_client_get_download_status_gets_targeted_download_endpoint():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url == "http://qbitlarr.test/downloads/abcdef1234567890"
+        return httpx.Response(
+            200,
+            json={
+                "name": "Ubuntu 24.04",
+                "state": "downloading",
+                "progress": 0.42,
+                "size": 1234567,
+                "seeds": 10,
+                "hash": "abcdef1234567890",
+            },
+        )
+
+    client = QbitlarrApiClient(
+        api_url="http://qbitlarr.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    result = asyncio.run(client.get_download_status("abcdef1234567890"))
+
+    assert result["hash"] == "abcdef1234567890"
+    assert result["state"] == "downloading"
+
+
 def test_qbitlarr_api_client_list_prowlarr_indexers_gets_indexer_endpoint():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"

@@ -55,6 +55,10 @@ class FakeClient:
         self.calls.append(("downloads", {}))
         return [{"name": "Ubuntu 24.04", "state": "downloading", "progress": 0.5}]
 
+    async def get_download_status(self, info_hash):
+        self.calls.append(("download-status", {"info_hash": info_hash}))
+        return {"name": "Ubuntu 24.04", "state": "downloading", "progress": 0.5, "hash": info_hash}
+
     async def health(self, *, deep=False):
         self.calls.append(("health", {"deep": deep}))
         return {"status": "ok", "service": "qBitlarr API"}
@@ -264,6 +268,16 @@ def test_cli_downloads_lists_torrents():
     assert result.exit_code == 0
     assert json.loads(result.stdout)[0]["name"] == "Ubuntu 24.04"
     assert fake_client.calls == [("downloads", {})]
+
+
+def test_cli_download_status_reads_single_torrent():
+    fake_client = FakeClient()
+
+    result = _run_cli(["download-status", "abcdef1234567890"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["hash"] == "abcdef1234567890"
+    assert fake_client.calls == [("download-status", {"info_hash": "abcdef1234567890"})]
 
 
 def test_cli_health_supports_deep_check():
