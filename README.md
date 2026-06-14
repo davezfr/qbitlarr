@@ -8,10 +8,10 @@ For people who already run Plex, Jellyfin, or Emby and want a lightweight way to
 
 qBitlarr is one small FastAPI service that:
 
-- Takes a natural-language request, an IMDb ID, or an IMDb URL.
-- Searches your Prowlarr indexers.
-- Picks the best release using opinionated, configurable quality preferences.
-- Queues it in your existing qBittorrent.
+- Takes a natural-language title, an IMDb ID, or an IMDb / Douban / AlloCine link.
+- Identifies the title, then searches your Prowlarr indexers.
+- Ranks releases with opinionated, configurable quality preferences and shows you the top few to pick from.
+- Queues your pick in your existing qBittorrent (or auto-picks the best one in `auto` mode).
 - Exposes everything as REST, MCP, and a small CLI so it drops into Claude Desktop, Cursor, ChatGPT custom tools, Telegram bots, shell scripts, cron jobs, or your own agent.
 
 Works with any HTTP client, Claude/Cursor/ChatGPT via MCP, or the `qbitlarr` CLI.
@@ -101,16 +101,22 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 </table>
 
 > **You:** *Download The Hitch-Hiker.*
-> **Agent:** The Hitch-Hiker is now downloading with 9 seeders. You can ask for a status update any time.
+> **Agent:** A couple of titles match — which one?
+>   1. The Hitch-Hiker (1953)
+>   2. The Hitchhiker's Guide to the Galaxy (2005)
 
-> **You:** *Download tt0045877 from IMDb.*
-> **Agent:** The Hitch-Hiker is now downloading with 9 seeders. You can ask for a status update any time.
+> **You:** *The first one.*
+> **Agent:** Here are the top releases — reply with the number:
+>   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
+>   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 
-> **You:** *Download https://movie.douban.com/subject/1292052/.*
-> **Agent:** The Shawshank Redemption is now downloading with 50 seeders. You can ask for a status update any time.
+> **You:** *Download tt0045877* — an IMDb ID or link skips straight to the releases.
+> **Agent:** Here are the top releases — reply with the number:
+>   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
+>   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 
-> **You:** *I want The Hitch-Hiker in 4K.*
-> **Agent:** The Hitch-Hiker is now downloading with 50 seeders. You can ask for a status update any time.
+> **You:** *Number 1 — and I want 4K.*
+> **Agent:** The Hitch-Hiker (2160p) is now downloading with 50 seeders. You can ask for a status update any time.
 
 > **You:** *What's downloading right now?*
 > **Agent:** ⬇️ The Hitch-Hiker<br>
@@ -119,13 +125,7 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 > ⚡ Speed: 8.4 MB/s<br>
 > ⏱️ ETA: 6m
 
-> **You:** *Find me The Hitch-Hiker, but I want to pick the release.*
-> **Agent:** Here are the top results — reply with the number:
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
->   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
-
-Behind the scenes: when the agent gets a clear title, it auto-picks the best 1080p release that has enough seeders and queues it in your qBittorrent. When the title is ambiguous (just a free-text search), it returns a ranked list and waits for your pick. Status answers can come back as raw data from `qbitlarr_list_downloads` / `qbitlarr_get_download_status`, or as chat-ready emoji progress cards from `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status`. Rendered status uses a 10-cell emoji bar: active downloads fill with 🟩, paused downloads use 🟧, errors use 🟥, empty cells are ⬜, and completed downloads show ✅. Single-download status responses can also include Telegram callback buttons for pause/resume and delete; adapters should use the returned `callback_data` and enforce the requester ID. Rendered status responses include a bounded dynamic-refresh policy for Telegram-style bots: keep the progress card in a separate status message, refresh that message every 3 seconds for up to 15 minutes, skip tiny updates unless progress changes by at least 3 percentage points, then edit it to "Still downloading. Ask for status again to refresh; completion will still notify you." Completion notifications remain separate and still fire when the torrent reaches 100%; callers can include a one-line follow-up message such as starting subtitle processing when a downstream workflow is already attached. In shared-bot setups, pass a stable per-user `user_id` / `requester_id` such as `telegram:<current user id>` so qBitlarr tags each torrent and status checks can be limited to that user's own downloads. You can always say *"4K"*, *"Remux"*, or *"720p HEVC"* to override the default quality.
+Behind the scenes, every request resolves to one title first: an IMDb / Douban / AlloCine link or ID locks the title directly, while a plain keyword is matched against Wikidata — and if several titles match, the agent asks which one you mean before showing releases. If nothing matches, qBitlarr asks for an IMDb link rather than guessing. Once the title is fixed it ranks releases and returns the top few to pick from; in `auto` mode it queues the best one outright. Say *"4K"*, *"Remux"*, or *"720p HEVC"* any time to override the default quality. Status comes back as raw data (`qbitlarr_list_downloads` / `qbitlarr_get_download_status`) or as chat-ready emoji progress cards (`qbitlarr_render_*`); see [Connect To An Agent](#connect-to-an-agent) for the refresh and completion-notification details.
 
 ### Pro tip: share straight from the movie app or website
 
@@ -135,7 +135,7 @@ The fastest way to use qBitlarr is to skip typing the title:
 2. Tap the share icon → pick the chat app where your agent lives (Telegram, WhatsApp, Discord, Signal, iMessage, etc.).
 3. The agent receives a URL like `https://www.imdb.com/title/tt0045877/` or `https://movie.douban.com/subject/1292052/`, resolves it to the canonical IMDb flow, and auto-identifies the title — no typing, no spelling traps, no ambiguity.
 
-A raw IMDb ID like `tt0045877` works the same way if you have one handy. qBitlarr also accepts `douban:1292052` and `allocine:25801` for supported movie IDs. It resolves those IDs, runs a precise lookup against your indexers, and queues the best match in seconds.
+A raw IMDb ID like `tt0045877` works the same way if you have one handy. qBitlarr also accepts `douban:1292052` and `allocine:25801` for supported movie IDs. It resolves those IDs and jumps straight to the ranked release choices for that exact title — no title-matching step.
 
 ## When To Use This vs Sonarr / Radarr
 
@@ -210,15 +210,25 @@ End users override per-request just by saying so in natural language:
 - `"The Hitch-Hiker Remux"` → forces a Remux release
 - `"The Hitch-Hiker 720p HEVC"` → 720p H.265
 
-## Output Modes
+## How A Request Is Resolved
 
-`POST /handle` accepts an optional `mode` field controlling what happens when an IMDb ID is given:
+Every `/handle` request follows the same path, so a keyword and an IMDb link end up in the same place:
 
-- `auto` *(default)* — pick the best release and queue it. Best for "set and forget" friends/family use.
-- `manual` — always return a ranked list, never queue anything. Best for power users who want to choose.
-- `confirm` — return the top pick and runner-ups, but do **not** queue. Best for agent flows that want user confirmation before committing.
+1. **Identify the title.** An IMDb ID/URL or a supported Douban/AlloCine link resolves directly. A plain keyword is matched against Wikidata (no API key, no extra account). If several titles match, qBitlarr returns a `choose_title` list (title + year) and waits for the user to pick one; if nothing matches, it returns `needs_imdb` and asks for an IMDb link.
+2. **Rank releases** for that one title using your quality preferences.
+3. **Return the top ~5 release choices** to pick from — or, in `auto` mode, queue the best one outright.
 
-Override the server-wide default with `QBITLARR_DEFAULT_MODE=auto|manual|confirm`. Auto-download responses always include an `alternatives` list with 2–3 runner-ups so an agent can offer "or did you mean..." without a second tool call.
+Wikidata keyword matching is intentionally lightweight, so obscure titles may not resolve; that is when qBitlarr asks for an IMDb link instead of guessing.
+
+### Output Modes
+
+`POST /handle` accepts an optional `mode` field:
+
+- `manual` *(default)* — return ranked release choices, never queue anything.
+- `auto` — queue the best release outright. Best for "set and forget" friends/family use; the response includes an `alternatives` list of 2–3 runner-ups for "or did you mean...".
+- `confirm` — return the top pick plus runner-ups, but do **not** queue.
+
+Override the server-wide default with `QBITLARR_DEFAULT_MODE=manual|auto|confirm`.
 
 ## Completed Task Cleanup
 
@@ -302,7 +312,7 @@ The pattern is the same — they all support one or both transports:
 
 If your agent supports a system prompt or "tool instructions" field, add a short pointer so it reaches for qBitlarr at the right moment:
 
-> *When the user asks to download a movie, TV show, or anime that they are allowed to access, use the qbitlarr MCP tools. Default to `qbitlarr_handle` — it accepts IMDb IDs, IMDb URLs, supported Douban movie links or IDs, supported AlloCine film links or IDs, and free-text titles, and decides whether to auto-pick or return a list. Only fall back to `qbitlarr_search` + `qbitlarr_download` when the user explicitly wants to choose from a list.*
+> *When the user asks to download a movie, TV show, or anime that they are allowed to access, use the qbitlarr MCP tools. Default to `qbitlarr_handle` — it accepts IMDb IDs, IMDb URLs, supported Douban movie links or IDs, supported AlloCine film links or IDs, and free-text titles. By default it returns ranked release choices to pick from (or a short title picker first when a keyword matches several titles); if it returns `needs_imdb`, ask the user for an IMDb link. Only fall back to `qbitlarr_search` + `qbitlarr_download` for manual power-user control.*
 
 This nudges agents that wouldn't otherwise know your downloader is now an option.
 
@@ -369,7 +379,7 @@ curl http://localhost:8000/prowlarr/indexers
 
 ## Save Paths
 
-`/handle` auto-downloads route based on media type and resolution:
+`/handle` routes each queued download to a save path based on media type and resolution:
 
 - `QBITLARR_SAVE_PATH_MOVIE=/downloads/movies`
 - `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`

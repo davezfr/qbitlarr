@@ -230,9 +230,23 @@ class ManualSearchResult(BaseModel):
     )
 
 
+class MovieCandidate(BaseModel):
+    index: int
+    title: str
+    year: int | None = None
+    imdb_id: str
+    label: str = Field(
+        description=(
+            "Chat-ready one-line label such as 'The Hitch-Hiker (1953)'. Render each "
+            "candidate as a pick option; when the user picks one, call qbitlarr_handle "
+            "again with its imdb_id to get the release choices."
+        ),
+    )
+
+
 class HandleResponse(BaseModel):
     status: Literal["success", "not_found"]
-    action: Literal["auto_download", "show_results", "confirm"]
+    action: Literal["auto_download", "show_results", "confirm", "choose_title", "needs_imdb"]
     message: str
     choices_table: str | None = Field(
         default=None,
@@ -250,6 +264,14 @@ class HandleResponse(BaseModel):
     quality: str | None = None
     download_status: TorrentStatus | None = None
     results: list[ManualSearchResult] | None = None
+    candidates: list[MovieCandidate] | None = Field(
+        default=None,
+        description=(
+            "Populated on the 'choose_title' action when a keyword matched several "
+            "movies/shows. Ask the user which one they mean, then re-call "
+            "qbitlarr_handle with the chosen candidate's imdb_id."
+        ),
+    )
     alternatives: list[ManualSearchResult] | None = Field(
         default=None,
         description=(

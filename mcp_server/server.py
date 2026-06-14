@@ -51,26 +51,30 @@ def create_mcp_server() -> FastMCP:
         "https://www.imdb.com/title/tt0045877/",
         "https://movie.douban.com/subject/1292052/",
         "https://www.allocine.fr/film/fichefilm_gen_cfilm=25801.html",
-        "The Hitch-Hiker", or "Example Show S03". If the message contains an
-        IMDb ID, IMDb URL, or supported Douban or AlloCine movie link, qBitlarr
-        resolves it to the canonical IMDb flow, applies quality/seed rules, and
-        queues the selected result in qBittorrent. If the message is a keyword
-        search or no safe automatic match is found, qBitlarr returns a friendly
-        numbered list with download_link values for manual selection.
+        "The Hitch-Hiker", or "Example Show S03". Every request is resolved to a
+        single movie/show identity first, then to ranked release choices, so the
+        keyword path and the IMDb/Douban/AlloCine path end at the same place.
 
-        On auto_download responses, an "alternatives" list is included with the
-        top runner-ups, so the user can be offered "or did you mean..." without
-        a second tool call.
-
-        When the response includes a "choices_table" (IMDb-resolved searches),
-        present choices via clarify with choices_display=choices_table and
-        recommended_index=1, passing each entry's "label" field as the choices
-        array. The table is pre-aligned monospace text — never re-format it.
-        When choices_table is absent (keyword searches), build the choice list
-        from each entry's "label" field verbatim (plus size and seeders); the
-        label keeps the full release title so the user can tell different
-        films apart. Do not append the "quality" field to the label — that
-        information is already included.
+        Branch on the response "action":
+          - "show_results": ranked release choices for one identified title.
+            Present them and download the user's pick. A "choices_table"
+            (pre-aligned monospace text) is included — send it verbatim via
+            clarify with choices_display=choices_table and recommended_index=1,
+            passing each result's "label" field as the choices array. Never
+            re-format the table, and do not append "quality" to the label (it is
+            already in the table).
+          - "auto_download" (mode="auto" only): the best release was queued; an
+            "alternatives" list of runner-ups is included so the user can be
+            offered "or did you mean..." without a second call.
+          - "confirm" (mode="confirm"): the top pick plus alternatives, nothing
+            queued.
+          - "choose_title": a keyword matched several titles. The "candidates"
+            list holds {index, title, year, imdb_id, label}. Ask the user which
+            one they mean (show each "label"), then call qbitlarr_handle again
+            with the chosen candidate's imdb_id to get its release choices.
+          - "needs_imdb": no title could be identified (an unresolved link or a
+            keyword with no match). Relay the message and ask the user to send
+            an IMDb link or ID.
 
         Args:
             user_message: IMDb ID, IMDb URL, supported Douban movie link,

@@ -28,7 +28,15 @@ from app.domain.choice_table import render_choice_table
 from app.domain.save_paths import default_save_path_for_title, validate_save_path_override
 from app.domain.torrent_metadata import parse_torrent_name
 from app.exceptions import ConfigurationError, UpstreamServiceError
-from app.models import HandleRequest, HandleResponse, ManualSearchResult, SearchRequest, SearchResult, TorrentStatus
+from app.models import (
+    HandleRequest,
+    HandleResponse,
+    ManualSearchResult,
+    MovieCandidate,
+    SearchRequest,
+    SearchResult,
+    TorrentStatus,
+)
 from app.services.prowlarr import search_prowlarr
 from app.services.query_snapshots import QuerySnapshotStore, create_query_id
 from app.services.qbittorrent import (
@@ -37,7 +45,7 @@ from app.services.qbittorrent import (
     list_downloads_from_qbittorrent,
     tag_download_for_requester,
 )
-from app.services.wikidata import resolve_external_movie_id
+from app.services.wikidata import resolve_external_movie_id, search_movie_candidates
 
 
 logger = logging.getLogger("qbitlarr-api.handle")
@@ -60,6 +68,12 @@ EXTERNAL_ID_UNRESOLVED_MESSAGE = (
     "I couldn't match that link to a movie reliably. "
     "For faster and more precise results, please send the IMDb link or IMDb ID instead."
 )
+KEYWORD_UNRESOLVED_MESSAGE = (
+    "I couldn't find a movie or show matching that title. "
+    "Please send the IMDb link or IMDb ID and I'll take it from there."
+)
+CHOOSE_TITLE_MESSAGE = "I found a few possible matches. Reply with the number of the title you mean:"
+MOVIE_CANDIDATE_LIMIT = 5
 
 
 @router.post(
@@ -126,89 +140,59 @@ async def handle(request: HandleRequest, background_tasks: BackgroundTasks) -> H
                 external_resolution.get("source_id"),
                 request.user_id or "anonymous",
             )
-            unresolved_request = SearchRequest(query=user_message, categories=get_categories(user_message))
-            store.create(
+            return _needs_imdb_response(
                 query_id=query_id,
-                request=_snapshot_request_payload(
-                    user_message=user_message,
-                    search_request=unresolved_request,
-                    settings=settings,
-                ),
-                status="external_id_unresolved",
-                reason="external_id_unresolved",
-                results=[],
-            )
-            return HandleResponse(
-                status="success",
-                action="show_results",
+                store=store,
+                user_message=user_message,
+                settings=settings,
                 message=EXTERNAL_ID_UNRESOLVED_MESSAGE,
-                query_id=query_id,
                 snapshot_status="external_id_unresolved",
-                results=[],
             )
 
         logger.info("Handling keyword request for user_id=%s", request.user_id or "anonymous")
-        base_request = SearchRequest(query=user_message, categories=get_categories(user_message))
-        primary_results = await _search_primary(base_request, settings)
-        media_type = infer_media_type(user_message, primary_results)
-        prefer_premium = contains_premium_quality_request(user_message)
-        requested_resolution = extract_requested_resolution(user_message)
-        preferences = _preferences(settings)
-        primary_ranked = _rank_results(
-            primary_results,
-            media_type=media_type,
-            prefer_premium=prefer_premium,
-            requested_resolution=requested_resolution,
-            require_min_seeders=False,
-            preferences=preferences,
-        )
+        candidates = await search_movie_candidates(user_message, settings, limit=MOVIE_CANDIDATE_LIMIT)
 
-        store.create(
-            query_id=query_id,
-            request=_snapshot_request_payload(user_message=user_message, search_request=base_request, settings=settings),
-            status="primary_ready" if primary_ranked else "primary_empty",
-            reason="primary_results_ready" if primary_ranked else "primary_no_results",
-            results=primary_ranked,
-        )
-
-        if primary_ranked:
-            _schedule_fallback_snapshot(
-                background_tasks,
+        if not candidates:
+            logger.info("No movie/show candidate matched the keyword for user_id=%s", request.user_id or "anonymous")
+            return _needs_imdb_response(
                 query_id=query_id,
-                base_request=base_request,
-                settings=settings,
                 store=store,
-                existing_results=primary_ranked,
-                media_type=media_type,
-                prefer_premium=prefer_premium,
-                requested_resolution=requested_resolution,
-            )
-            results = primary_ranked
-            snapshot_status = "primary_ready"
-        else:
-            results = await _search_fallback_and_append(
-                query_id=query_id,
-                base_request=base_request,
+                user_message=user_message,
                 settings=settings,
-                store=store,
-                existing_results=[],
-                media_type=media_type,
-                prefer_premium=prefer_premium,
-                requested_resolution=requested_resolution,
-                require_min_seeders=False,
+                message=KEYWORD_UNRESOLVED_MESSAGE,
+                snapshot_status="keyword_unresolved",
             )
-            snapshot_status = "fallback_ready" if results else "not_found"
 
-        return _manual_results_response(
-            results,
-            status="success" if results else "not_found",
-            message=MANUAL_RESULTS_MESSAGE,
-            media_type=media_type,
-            prefer_premium=prefer_premium,
-            requested_resolution=requested_resolution,
+        if len(candidates) == 1:
+            only = candidates[0]
+            logger.info(
+                "Keyword resolved to a single candidate imdb_id=%s for user_id=%s",
+                only["imdb_id"],
+                request.user_id or "anonymous",
+            )
+            return await _handle_imdb_request(
+                only["imdb_id"],
+                settings,
+                user_message=user_message,
+                query_id=query_id,
+                store=store,
+                background_tasks=background_tasks,
+                save_path_override=request.save_path,
+                requester_id=request.user_id,
+                mode=mode,
+            )
+
+        logger.info(
+            "Keyword matched %d candidates for user_id=%s",
+            len(candidates),
+            request.user_id or "anonymous",
+        )
+        return _choose_title_response(
+            candidates,
             query_id=query_id,
-            snapshot_status=snapshot_status,
-            preferences=preferences,
+            store=store,
+            user_message=user_message,
+            settings=settings,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -759,6 +743,71 @@ def get_categories(user_message: str) -> list[int]:
     if any(keyword.casefold() in normalized_message for keyword in FULL_CATEGORY_KEYWORDS):
         return list(FULL_MOVIE_TV_CATEGORIES)
     return list(DEFAULT_SEARCH_CATEGORIES)
+
+
+def _needs_imdb_response(
+    *,
+    query_id: str,
+    store: QuerySnapshotStore,
+    user_message: str,
+    settings: Settings,
+    message: str,
+    snapshot_status: str,
+) -> HandleResponse:
+    base_request = SearchRequest(query=user_message, categories=get_categories(user_message))
+    store.create(
+        query_id=query_id,
+        request=_snapshot_request_payload(user_message=user_message, search_request=base_request, settings=settings),
+        status=snapshot_status,
+        reason=snapshot_status,
+        results=[],
+    )
+    return HandleResponse(
+        status="not_found",
+        action="needs_imdb",
+        message=message,
+        query_id=query_id,
+        snapshot_status=snapshot_status,
+        results=[],
+    )
+
+
+def _choose_title_response(
+    candidates: list[dict],
+    *,
+    query_id: str,
+    store: QuerySnapshotStore,
+    user_message: str,
+    settings: Settings,
+) -> HandleResponse:
+    base_request = SearchRequest(query=user_message, categories=get_categories(user_message))
+    store.create(
+        query_id=query_id,
+        request=_snapshot_request_payload(user_message=user_message, search_request=base_request, settings=settings),
+        status="title_candidates",
+        reason="title_candidates_ready",
+        results=[],
+    )
+    return HandleResponse(
+        status="success",
+        action="choose_title",
+        message=CHOOSE_TITLE_MESSAGE,
+        query_id=query_id,
+        snapshot_status="title_candidates",
+        candidates=_to_movie_candidates(candidates),
+    )
+
+
+def _to_movie_candidates(candidates: list[dict]) -> list[MovieCandidate]:
+    movie_candidates: list[MovieCandidate] = []
+    for index, candidate in enumerate(candidates, start=1):
+        title = candidate["title"]
+        year = candidate.get("year")
+        label = f"{title} ({year})" if year else title
+        movie_candidates.append(
+            MovieCandidate(index=index, title=title, year=year, imdb_id=candidate["imdb_id"], label=label)
+        )
+    return movie_candidates
 
 
 def _manual_results_response(

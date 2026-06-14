@@ -167,15 +167,25 @@ def test_get_categories_keeps_movie_hd_for_non_uhd_premium_keywords(message):
     assert get_categories(message) == [2040, 5040]
 
 
-def test_handle_keyword_search_returns_numbered_friendly_results(monkeypatch, tmp_path):
-    async def fake_search_prowlarr(request, settings):
-        assert request.query == "The Hitch-Hiker"
-        assert request.categories == [2040, 5040]
-        return [_result(f"The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP-{index}") for index in range(12)]
+def _candidate(title, *, imdb_id, year=None):
+    return {"title": title, "year": year, "imdb_id": imdb_id, "wikidata_qid": None}
 
-    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+
+def test_handle_keyword_with_multiple_candidates_returns_choose_title(monkeypatch, tmp_path):
+    async def fake_candidates(query, settings, *, limit=5):
+        assert query == "The Hitch-Hiker"
+        return [
+            _candidate("The Hitch-Hiker", imdb_id="tt0045877", year=1953),
+            _candidate("The Hitchhiker's Guide to the Galaxy", imdb_id="tt0371724", year=2005),
+        ]
+
+    async def unexpected_search_prowlarr(request, settings):
+        raise AssertionError("Prowlarr must not be searched while the user is still picking a title")
+
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
+    monkeypatch.setattr("app.api.handle.search_prowlarr", unexpected_search_prowlarr)
     monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
-    app.dependency_overrides[get_settings] = lambda: _settings(tmp_path, fallback_indexer_ids=[])
+    monkeypatch.setattr("app.api.handle.create_query_id", lambda: "query-titles")
 
     client = TestClient(app)
     response = client.post("/handle", json={"user_message": "The Hitch-Hiker"})
@@ -183,94 +193,93 @@ def test_handle_keyword_search_returns_numbered_friendly_results(monkeypatch, tm
     assert response.status_code == 200
     payload = response.json()
     assert payload["status"] == "success"
-    assert payload["action"] == "show_results"
-    assert payload["message"] == "Here are the top results, please reply with the number:"
+    assert payload["action"] == "choose_title"
     _assert_english_message(payload)
-    assert len(payload["results"]) == 5
-    assert payload["results"][0]["index"] == 1
-    assert payload["results"][0]["quality"] == "1080p WEB-DL H.264"
+    assert payload["query_id"] == "query-titles"
+    assert payload["snapshot_status"] == "title_candidates"
+    assert payload["results"] is None
+    assert [c["index"] for c in payload["candidates"]] == [1, 2]
+    assert [c["label"] for c in payload["candidates"]] == [
+        "The Hitch-Hiker (1953)",
+        "The Hitchhiker's Guide to the Galaxy (2005)",
+    ]
+    assert payload["candidates"][0]["imdb_id"] == "tt0045877"
 
 
-def test_handle_keyword_search_manual_results_prefer_seeders_within_requested_quality(monkeypatch, tmp_path):
+def test_handle_keyword_with_single_candidate_passes_through_to_release_search(monkeypatch, tmp_path):
+    queued: dict = {}
+
+    async def fake_candidates(query, settings, *, limit=5):
+        return [_candidate("The Shawshank Redemption", imdb_id="tt0111161", year=1994)]
+
     async def fake_search_prowlarr(request, settings):
-        assert request.query == "The Hitch-Hiker"
+        # The release search is keyed by the resolved IMDb ID, not the raw keyword.
+        assert request.query == "tt0111161"
+        return [_result("The.Shawshank.Redemption.1994.1080p.WEB-DL.H.264-GRP", seeders=50, link_suffix="shawshank")]
+
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
+        queued["download_link"] = download_link
+
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
+    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
+
+    client = TestClient(app)
+    response = client.post("/handle", json={"user_message": "Shawshank Redemption"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "auto_download"
+    assert payload["imdb_id"] == "tt0111161"
+    assert queued["download_link"] == "https://example.test/shawshank.torrent"
+
+
+def test_handle_keyword_with_no_candidates_asks_for_imdb(monkeypatch, tmp_path):
+    async def fake_candidates(query, settings, *, limit=5):
+        return []
+
+    async def unexpected_search_prowlarr(request, settings):
+        raise AssertionError("Prowlarr must not be searched when no title can be identified")
+
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
+    monkeypatch.setattr("app.api.handle.search_prowlarr", unexpected_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
+    monkeypatch.setattr("app.api.handle.create_query_id", lambda: "query-needs-imdb")
+
+    client = TestClient(app)
+    response = client.post("/handle", json={"user_message": "asdkfjghqwer"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "not_found"
+    assert payload["action"] == "needs_imdb"
+    _assert_english_message(payload)
+    assert payload["query_id"] == "query-needs-imdb"
+    assert payload["snapshot_status"] == "keyword_unresolved"
+    assert payload["candidates"] is None
+
+
+def test_handle_keyword_choose_title_writes_title_candidates_snapshot(monkeypatch, tmp_path):
+    async def fake_candidates(query, settings, *, limit=5):
         return [
-            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=20, link_suffix="h264"),
-            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.265-GRP", seeders=80, link_suffix="h265"),
-            _result("The.Hitch-Hiker.1953.1080p.WEBRip.H.264-GRP", seeders=120, link_suffix="webrip"),
-            _result("The.Hitch-Hiker.1953.720p.WEB-DL.H.264-GRP", seeders=400, link_suffix="720"),
+            _candidate("Rare Movie", imdb_id="tt1000001", year=1971),
+            _candidate("Rare Movie Returns", imdb_id="tt1000002", year=1985),
         ]
 
-    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
     monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
+    monkeypatch.setattr("app.api.handle.create_query_id", lambda: "query-titles-snapshot")
 
     client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "The Hitch-Hiker"})
+    response = client.post("/handle", json={"user_message": "Rare Movie"})
 
     assert response.status_code == 200
-    payload = response.json()
-    assert [result["title"] for result in payload["results"]] == [
-        "The.Hitch-Hiker.1953.1080p.WEBRip.H.264-GRP",
-        "The.Hitch-Hiker.1953.1080p.WEB-DL.H.265-GRP",
-        "The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP",
-    ]
-    assert [result["seeders"] for result in payload["results"]] == [120, 80, 20]
+    assert response.json()["query_id"] == "query-titles-snapshot"
 
-
-def test_handle_keyword_search_returns_query_id_and_writes_primary_snapshot(monkeypatch, tmp_path):
-    async def fake_search_prowlarr(request, settings):
-        assert request.query == "The Hitch-Hiker"
-        assert request.indexer_ids == [10, 20]
-        return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=50, link_suffix="primary")]
-
-    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
-    monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
-    monkeypatch.setattr("app.api.handle.create_query_id", lambda: "query-primary")
-
-    client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "The Hitch-Hiker"})
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["query_id"] == "query-primary"
-
-    snapshot = QuerySnapshotStore(str(tmp_path)).read("query-primary")
-    assert snapshot.status == "primary_ready"
-    assert snapshot.snapshots[0].reason == "primary_results_ready"
-    assert snapshot.snapshots[0].results[0].indexer == "Indexer A"
-
-
-def test_handle_keyword_search_waits_for_fallback_when_primary_has_no_results(monkeypatch, tmp_path):
-    calls: list[list[int] | None] = []
-
-    async def fake_search_prowlarr(request, settings):
-        calls.append(request.indexer_ids)
-        if request.indexer_ids == [10, 20]:
-            return []
-        if request.indexer_ids == [1337]:
-            return [_result("Rare.Movie.1971.1080p.WEB-DL.H.264-GRP", seeders=12, link_suffix="fallback")]
-        raise AssertionError(f"unexpected indexer_ids: {request.indexer_ids}")
-
-    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
-    monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path))
-    monkeypatch.setattr("app.api.handle.create_query_id", lambda: "query-fallback")
-
-    client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "Rare Movie 1971"})
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["query_id"] == "query-fallback"
-    assert payload["results"][0]["title"] == "Rare.Movie.1971.1080p.WEB-DL.H.264-GRP"
-    assert calls == [[10, 20], [1337]]
-
-    snapshot = QuerySnapshotStore(str(tmp_path)).read("query-fallback")
-    assert snapshot.status == "fallback_ready"
-    assert [item.reason for item in snapshot.snapshots] == [
-        "primary_no_results",
-        "fallback_results_ready",
-    ]
-    assert snapshot.snapshots[-1].results[0].download_link == "https://example.test/fallback.torrent"
+    snapshot = QuerySnapshotStore(str(tmp_path)).read("query-titles-snapshot")
+    assert snapshot.status == "title_candidates"
+    assert snapshot.snapshots[0].reason == "title_candidates_ready"
 
 
 def test_get_query_snapshot_endpoint_returns_saved_snapshot(monkeypatch, tmp_path):
@@ -293,31 +302,29 @@ def test_get_query_snapshot_endpoint_returns_saved_snapshot(monkeypatch, tmp_pat
     assert payload["snapshots"][0]["results"][0]["title"] == "The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP"
 
 
-def test_handle_keyword_search_defaults_to_1080p_and_orders_by_seeders_then_preference(monkeypatch, tmp_path):
-    async def fake_search_prowlarr(request, settings):
-        assert request.query == "The Hitch-Hiker"
-        return [
-            _result("The.Hitch-Hiker.1953.2160p.UHD.BluRay.REMUX.H.265-GRP", seeders=500, link_suffix="2160"),
-            _result("The.Hitch-Hiker.1953.720p.WEB-DL.H.264-GRP", seeders=400, link_suffix="720"),
-            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.265-GRP", seeders=20, link_suffix="h265"),
-            _result("The.Hitch-Hiker.1953.1080p.WEBRip.H.264-GRP", seeders=120, link_suffix="webrip"),
-            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=20, link_suffix="h264"),
-        ]
+def test_handle_keyword_passthrough_preserves_premium_quality_request(monkeypatch, tmp_path):
+    async def fake_candidates(query, settings, *, limit=5):
+        return [_candidate("The Hitch-Hiker", imdb_id="tt0045877", year=1953)]
 
+    async def fake_search_prowlarr(request, settings):
+        # Premium intent in the keyword still widens the categories on the resolved search.
+        assert request.query == "tt0045877"
+        assert request.categories == [2000, 5000]
+        return [_result("The.Hitch-Hiker.1953.2160p.UHD.BluRay.REMUX.H.265-GRP", seeders=12, link_suffix="remux")]
+
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
+        return None
+
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
     monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.add_download_to_qbittorrent", fake_add_download)
     monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
 
     client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "The Hitch-Hiker"})
+    response = client.post("/handle", json={"user_message": "The Hitch-Hiker 4K Remux"})
 
     assert response.status_code == 200
-    payload = response.json()
-    assert [result["title"] for result in payload["results"]] == [
-        "The.Hitch-Hiker.1953.1080p.WEBRip.H.264-GRP",
-        "The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP",
-        "The.Hitch-Hiker.1953.1080p.WEB-DL.H.265-GRP",
-    ]
-    assert [result["seeders"] for result in payload["results"]] == [120, 20, 20]
+    assert response.json()["action"] == "auto_download"
 
 
 def test_handle_imdb_id_auto_downloads_best_movie_to_movie_path(monkeypatch, tmp_path):
@@ -748,8 +755,8 @@ def test_handle_allocine_movie_url_unresolved_asks_for_imdb(monkeypatch, tmp_pat
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "success"
-    assert payload["action"] == "show_results"
+    assert payload["status"] == "not_found"
+    assert payload["action"] == "needs_imdb"
     assert payload["message"] == (
         "I couldn't match that link to a movie reliably. "
         "For faster and more precise results, please send the IMDb link or IMDb ID instead."
@@ -759,19 +766,24 @@ def test_handle_allocine_movie_url_unresolved_asks_for_imdb(monkeypatch, tmp_pat
     assert payload["results"] == []
 
 
-def test_handle_premium_keyword_search_uses_all_movie_and_tv_categories(monkeypatch, tmp_path):
-    async def fake_search_prowlarr(request, settings):
-        assert request.query == "The Hitch-Hiker 4K Remux"
-        assert request.categories == [2000, 5000]
-        return [_result("The.Hitch-Hiker.1953.2160p.UHD.BluRay.REMUX.H.265-GRP")]
+def test_handle_keyword_choose_title_label_falls_back_to_title_without_year(monkeypatch, tmp_path):
+    async def fake_candidates(query, settings, *, limit=5):
+        return [
+            _candidate("Some Untitled Doc", imdb_id="tt9000001"),
+            _candidate("Another Match", imdb_id="tt9000002", year=2011),
+        ]
 
-    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
     monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
 
     client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "The Hitch-Hiker 4K Remux"})
+    response = client.post("/handle", json={"user_message": "untitled doc"})
 
     assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "choose_title"
+    assert payload["candidates"][0]["label"] == "Some Untitled Doc"
+    assert payload["candidates"][1]["label"] == "Another Match (2011)"
 
 
 def test_handle_imdb_id_returns_manual_list_when_no_result_meets_seed_threshold(monkeypatch, tmp_path):
@@ -936,10 +948,14 @@ def test_preference_env_vars_change_what_counts_as_default_match(monkeypatch, tm
             _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=80, link_suffix="1080"),
         ]
 
+    async def fake_candidates(query, settings, *, limit=5):
+        return [_candidate("The Hitch-Hiker", imdb_id="tt0045877", year=1953)]
+
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
     monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
     monkeypatch.setattr(
         "app.api.handle.get_settings",
-        lambda: _settings_with_prefs(tmp_path, prefer_resolution="720p", prefer_codec="H.265"),
+        lambda: _settings_with_prefs(tmp_path, prefer_resolution="720p", prefer_codec="H.265", default_mode="manual"),
     )
 
     client = TestClient(app)
@@ -1001,20 +1017,27 @@ def test_handle_imdb_manual_results_use_compact_labels_and_dedupe_same_release(m
     assert kept_webrip["title"] == "In.the.Grey.2026.1080p.WEBRip.x265-NeoNoir"
 
 
-def test_handle_keyword_results_keep_full_title_as_label(monkeypatch, tmp_path):
+def test_handle_second_stage_imdb_from_picker_returns_release_choices(monkeypatch, tmp_path):
+    # After choose_title, the agent re-calls /handle with the picked candidate's
+    # IMDb ID, which lands on the same unified release-choice flow.
     async def fake_search_prowlarr(request, settings):
-        return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=50)]
+        assert request.query == "tt0045877"
+        return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=80, link_suffix="h264")]
+
+    async def fail_download(*args, **kwargs):
+        raise AssertionError("manual mode must not auto-download")
 
     monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
-    monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
-    app.dependency_overrides[get_settings] = lambda: _settings(tmp_path, fallback_indexer_ids=[])
+    monkeypatch.setattr("app.api.handle.add_download_to_qbittorrent", fail_download)
+    monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings_with_prefs(tmp_path, default_mode="manual"))
 
     client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "The Hitch-Hiker"})
+    response = client.post("/handle", json={"user_message": "tt0045877"})
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["results"][0]["label"] == payload["results"][0]["title"]
+    assert payload["action"] == "show_results"
+    assert payload["choices_table"] is not None
 
 
 def test_settings_default_mode_is_manual():
@@ -1102,19 +1125,25 @@ def test_handle_imdb_show_results_includes_choices_table(monkeypatch, tmp_path):
     assert "🧲" in table and "💾" in table
 
 
-def test_handle_keyword_show_results_has_no_choices_table(monkeypatch, tmp_path):
-    async def fake_search_prowlarr(request, settings):
-        return [_result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=50)]
+def test_handle_keyword_choose_title_has_no_release_table(monkeypatch, tmp_path):
+    async def fake_candidates(query, settings, *, limit=5):
+        return [
+            _candidate("Parasite", imdb_id="tt6751668", year=2019),
+            _candidate("Parasite", imdb_id="tt0084472", year=1982),
+        ]
 
-    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
     monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings(tmp_path, fallback_indexer_ids=[]))
-    app.dependency_overrides[get_settings] = lambda: _settings(tmp_path, fallback_indexer_ids=[])
 
     client = TestClient(app)
-    response = client.post("/handle", json={"user_message": "The Hitch-Hiker"})
+    response = client.post("/handle", json={"user_message": "Parasite"})
 
     assert response.status_code == 200
-    assert response.json()["choices_table"] is None
+    payload = response.json()
+    assert payload["action"] == "choose_title"
+    assert payload["choices_table"] is None
+    assert payload["results"] is None
+    assert len(payload["candidates"]) == 2
 
 
 def test_download_response_includes_prerendered_status(monkeypatch, tmp_path):

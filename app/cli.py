@@ -236,6 +236,24 @@ def _format_handle_response_for_humans(payload: dict[str, Any]) -> str:
     results = _result_list(payload.get("results"))
     alternatives = _result_list(payload.get("alternatives"))
 
+    if action == "choose_title":
+        candidates = _result_list(payload.get("candidates"))
+        if candidates:
+            if lines:
+                lines.append("")
+            for fallback_index, candidate in enumerate(candidates, start=1):
+                index = candidate.get("index")
+                if not isinstance(index, int):
+                    index = fallback_index
+                label = (
+                    _string_value(candidate.get("label"))
+                    or _string_value(candidate.get("title"))
+                    or "Unknown title"
+                )
+                lines.append(f"{index}. {label}")
+            lines.append("")
+            lines.append("Pick one by its IMDb ID, e.g. `qbitlarr handle tt0045877`.")
+
     if action in ("show_results", "confirm"):
         if results:
             if lines:
