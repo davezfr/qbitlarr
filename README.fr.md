@@ -8,10 +8,10 @@ qBitlarr s'adresse aux personnes qui utilisent déjà Plex, Jellyfin ou Emby et 
 
 qBitlarr est un petit service FastAPI qui peut :
 
-- Recevoir une demande en langage naturel, un identifiant IMDb ou une URL IMDb.
-- Chercher dans vos indexeurs Prowlarr.
-- Choisir la meilleure release selon des préférences de qualité configurables.
-- Ajouter le téléchargement à votre qBittorrent existant.
+- Recevoir un titre en langage naturel, un identifiant IMDb, ou un lien IMDb / Douban / AlloCine.
+- Identifier le titre, puis chercher dans vos indexeurs Prowlarr.
+- Classer les releases selon des préférences de qualité configurables et vous montrer les meilleures options.
+- Ajouter votre choix à votre qBittorrent existant, ou choisir automatiquement la meilleure release en mode `auto`.
 - Exposer la même logique via REST, MCP et une petite CLI, afin de s'intégrer à Claude Desktop, Cursor, ChatGPT custom tools, des bots Telegram, des scripts shell, des cron jobs ou vos propres agents.
 
 Fonctionne avec n'importe quel client HTTP, Claude/Cursor/ChatGPT via MCP, ou la CLI `qbitlarr`.
@@ -81,31 +81,40 @@ curl 'http://localhost:8000/health?deep=true'
 
 Une fois qBitlarr branché à votre agent (ou via la CLI), vous lui parlez comme à un ami qui connaît votre configuration média :
 
+Pour les demandes de films, qBitlarr accepte directement les liens et IDs IMDb. Il peut aussi résoudre les liens ou IDs de films Douban et AlloCine pris en charge vers le même flux basé sur IMDb. Si un film Douban ou AlloCine ne peut pas être résolu de manière fiable, qBitlarr demande IMDb plutôt que de deviner.
+
 Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt0045877/), un film du domaine public listé par la Library of Congress dans son ensemble [Public Domain Films from the National Film Registry](https://www.loc.gov/free-to-use/public-domain-films-from-the-national-film-registry/). Les droits peuvent quand même varier selon la juridiction et selon la restauration, la bande-son, les sous-titres ou l'édition précise.
 
 <table>
   <tr>
     <td width="50%">
       <img src="docs/screenshots/telegram-imdb-share.jpg" alt="Exemple Telegram : partager la page IMDb de The Hitch-Hiker avec un agent, qui lance le téléchargement via qBitlarr.">
-      <br>
-      <em>Capture d'écran fournie à titre d'exemple uniquement. Le titre de base affiché est un exemple du domaine public (Public Domain) ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.</em>
     </td>
     <td width="50%">
       <img src="docs/screenshots/telegram-public-domain-selection.jpg" alt="Exemple Telegram : choisir et vérifier l'état d'un téléchargement de Night of the Living Dead 1968.">
-      <br>
-      <em>Capture d'écran fournie à titre d'exemple uniquement. Le titre de base affiché est un exemple du domaine public (Public Domain) ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.</em>
     </td>
   </tr>
 </table>
 
+*Captures d'écran fournies à titre d'exemple uniquement. Les titres affichés sont des exemples du domaine public ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.*
+
 > **Vous :** *Télécharge The Hitch-Hiker.*
-> **Agent :** Téléchargement automatique lancé : The Hitch-Hiker en 1080p WEB-DL H.264.
+> **Agent :** Quelques titres correspondent — lequel voulez-vous ?
+>   1. The Hitch-Hiker (1953)
+>   2. The Hitchhiker's Guide to the Galaxy (2005)
 
-> **Vous :** *Télécharge tt0045877 depuis IMDb.*
-> **Agent :** Téléchargement automatique lancé : The Hitch-Hiker en 1080p WEB-DL H.264.
+> **Vous :** *Le premier.*
+> **Agent :** Voici les meilleures releases, répondez avec le numéro :
+>   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
+>   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 
-> **Vous :** *Je veux The Hitch-Hiker en 4K.*
-> **Agent :** Téléchargement automatique lancé : The Hitch-Hiker en 2160p UHD BluRay REMUX H.265.
+> **Vous :** *Télécharge tt0045877* — un ID ou lien IMDb va directement aux releases.
+> **Agent :** Voici les meilleures releases, répondez avec le numéro :
+>   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
+>   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+
+> **Vous :** *Numéro 1 — et je veux la 4K.*
+> **Agent :** The Hitch-Hiker (2160p) est en téléchargement avec 50 seeders. Vous pouvez demander le statut à tout moment.
 
 > **Vous :** *Qu'est-ce qui télécharge en ce moment ?*
 > **Agent :** ⬇️ The Hitch-Hiker<br>
@@ -114,13 +123,7 @@ Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/
 > ⚡ Speed: 8.4 MB/s<br>
 > ⏱️ ETA: 6m
 
-> **Vous :** *Trouve-moi The Hitch-Hiker, mais je veux choisir la release.*
-> **Agent :** Voici les meilleurs résultats, répondez avec le numéro :
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
->   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
-
-En coulisses : quand l'agent reçoit un titre clair, il choisit automatiquement la meilleure release 1080p ayant assez de seeders et la met en file dans votre qBittorrent. Quand le titre est ambigu (recherche libre), il renvoie une liste triée et attend votre choix. Les réponses de statut peuvent venir des données brutes `qbitlarr_list_downloads` / `qbitlarr_get_download_status`, ou de cartes de progression emoji prêtes pour le chat via `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status`. Le rendu utilise une barre emoji de 10 cellules : les téléchargements actifs remplissent avec 🟩, les pauses avec 🟧, les erreurs avec 🟥, les cellules vides avec ⬜, et les téléchargements terminés avec ✅. Les réponses pour un seul téléchargement peuvent aussi inclure des boutons callback Telegram pour pause/reprise et suppression ; les adaptateurs doivent utiliser le `callback_data` renvoyé et vérifier le requester ID. Les réponses rendues incluent une politique de rafraîchissement bornée : la carte de progression doit être un message de statut séparé, rafraîchi toutes les 3 secondes pendant 15 minutes maximum, avec les petits changements ignorés tant que la progression n'a pas bougé d'au moins 3 points, puis édité en "Still downloading. Ask for status again to refresh; completion will still notify you." Les notifications de fin restent séparées et sont toujours envoyées à 100 %, et l'appelant peut ajouter une ligne de suivi, par exemple le démarrage du traitement des sous-titres, lorsqu'un workflow aval est déjà attaché. Pour l'édition directe des messages Telegram, le token est lu dans l'ordre `QBITLARR_TELEGRAM_BOT_TOKEN`, `QBITLARR_HERMES_ENV_PATH`, `HERMES_HOME/.env`, puis `~/.hermes/.env`; avec plusieurs profils/bots Hermes, pointez `QBITLARR_HERMES_ENV_PATH` vers le `.env` du profil courant. Le stdio MCP peut aussi utiliser `QBITLARR_COMPLETION_HOOK_COMMAND` pour lancer une commande locale après la fin du téléchargement ou quand le téléchargement surveillé est supprimé avant la fin : qBitlarr envoie d'abord la notification visible de fin/suppression, puis transmet un événement JSON `download_complete` ou `download_removed` sur stdin. Un échec du hook relance seulement le flux de suivi et ne bloque pas l'avis visible à l'utilisateur. Vous pouvez toujours dire *"4K"*, *"Remux"* ou *"720p HEVC"* pour forcer une qualité différente.
+En coulisses, chaque demande est d'abord résolue vers un titre précis : un lien ou ID IMDb / Douban / AlloCine verrouille le titre directement, tandis qu'un mot-clé est comparé via Wikidata. Si plusieurs titres correspondent, l'agent demande lequel vous voulez avant d'afficher les releases. Si rien ne correspond, qBitlarr demande un lien IMDb plutôt que de deviner. Une fois le titre fixé, il classe les releases et renvoie les meilleures options ; en mode `auto`, il ajoute directement la meilleure. Vous pouvez toujours dire *"4K"*, *"Remux"* ou *"720p HEVC"* pour remplacer les préférences par défaut. Le statut peut revenir sous forme de données brutes (`qbitlarr_list_downloads` / `qbitlarr_get_download_status`) ou de cartes de progression emoji prêtes pour le chat (`qbitlarr_render_*`) ; voir [Connecter un agent](#connecter-un-agent) pour les détails de rafraîchissement et de notifications de fin.
 
 ### Astuce : partager directement depuis l'app IMDb
 
@@ -130,7 +133,7 @@ Le moyen le plus rapide d'utiliser qBitlarr, c'est de ne rien taper du tout :
 2. Appuyez sur l'icône de partage → choisissez l'app où vit votre agent (Telegram, WhatsApp, Discord, Signal, iMessage, etc.).
 3. L'agent reçoit une URL du type `https://www.imdb.com/title/tt0045877/` et identifie le titre tout seul — pas de saisie, pas de fautes d'orthographe, pas d'ambiguïté.
 
-Un identifiant IMDb brut comme `tt0045877` marche pareil si vous en avez un sous la main. qBitlarr extrait l'ID, fait une requête précise auprès de vos indexeurs, et met le meilleur résultat en file en quelques secondes.
+Un identifiant IMDb brut comme `tt0045877` marche pareil si vous en avez un sous la main. qBitlarr accepte aussi `douban:1292052` et `allocine:25801` pour les IDs de films pris en charge. Il résout ces IDs et va directement aux choix de releases pour ce titre exact, sans étape de correspondance de titre.
 
 ## Quand l'utiliser plutôt que Sonarr / Radarr
 
@@ -205,15 +208,45 @@ Les utilisateurs peuvent aussi remplacer ces préférences dans chaque demande e
 - `"The Hitch-Hiker Remux"` → force une release Remux
 - `"The Hitch-Hiker 720p HEVC"` → 720p H.265
 
-## Modes de sortie
+## Comment une demande est résolue
 
-`POST /handle` accepte un champ optionnel `mode` qui contrôle le comportement lorsqu'un IMDb ID est donné :
+Chaque requête `/handle` suit le même chemin, donc un mot-clé et un lien IMDb finissent au même endroit :
 
-- `auto` *(par défaut)* — choisit la meilleure release et l'ajoute à la file. Idéal pour un usage simple par des amis ou la famille.
-- `manual` — renvoie toujours une liste classée et n'ajoute rien à la file. Idéal pour les utilisateurs qui veulent choisir.
-- `confirm` — renvoie le meilleur choix et quelques alternatives, mais n'ajoute rien à la file. Idéal pour les flux agentiques qui demandent une confirmation humaine avant d'agir.
+1. **Identifier le titre.** Un ID/URL IMDb ou un lien Douban/AlloCine pris en charge est résolu directement. Un mot-clé est comparé via Wikidata (sans clé API ni compte supplémentaire). Si plusieurs titres correspondent, qBitlarr renvoie une liste `choose_title` (titre + année) et attend le choix de l'utilisateur ; si rien ne correspond, il renvoie `needs_imdb` et demande un lien IMDb.
+2. **Classer les releases** pour ce titre unique selon vos préférences de qualité.
+3. **Renvoyer les ~5 meilleures releases** à choisir, ou ajouter directement la meilleure en mode `auto`.
 
-Changez le mode serveur par défaut avec `QBITLARR_DEFAULT_MODE=auto|manual|confirm`. Les réponses d'auto-download incluent toujours une liste `alternatives` avec 2 à 3 options, ce qui permet à un agent de proposer "ou vouliez-vous plutôt..." sans second appel d'outil.
+La correspondance par mot-clé via Wikidata est volontairement légère ; certains titres obscurs peuvent ne pas être résolus. Dans ce cas, qBitlarr demande un lien IMDb au lieu de deviner.
+
+### Modes de sortie
+
+`POST /handle` accepte un champ optionnel `mode` :
+
+- `manual` *(par défaut)* — renvoie des choix de releases classés et n'ajoute rien à la file.
+- `auto` — ajoute directement la meilleure release. Idéal pour un usage simple par des amis ou la famille ; la réponse inclut une liste `alternatives` de 2 à 3 options pour proposer "ou vouliez-vous plutôt...".
+- `confirm` — renvoie le meilleur choix et quelques alternatives, mais n'ajoute rien à la file.
+
+Changez le mode serveur par défaut avec `QBITLARR_DEFAULT_MODE=manual|auto|confirm`.
+
+## Nettoyage des tâches terminées
+
+qBitlarr peut supprimer périodiquement les tâches qBittorrent terminées qu'il gère, tout en conservant les fichiers téléchargés. Les nouveaux téléchargements qBitlarr reçoivent le tag `qbitlarr.managed` ; les anciens tags `requester.*` peuvent aussi être inclus par compatibilité.
+
+Désactivé par défaut. Activez et ajustez avec ces variables :
+
+```sh
+QBITLARR_CLEANUP_ENABLED=false
+QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200
+QBITLARR_CLEANUP_INTERVAL_SECONDS=21600
+QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS=true
+```
+
+Notes :
+
+- `QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200` nettoie les tâches terminées depuis au moins 3 jours.
+- `QBITLARR_CLEANUP_INTERVAL_SECONDS=21600` vérifie toutes les 6 heures.
+- Le nettoyage appelle qBittorrent avec `delete_files=false`, donc il supprime seulement la tâche, pas les fichiers média.
+- Les torrents non gérés, sans tag `qbitlarr.managed` ni ancien tag `requester.*`, sont ignorés.
 
 ## Connecter un agent
 
@@ -227,6 +260,14 @@ Deux transports sont disponibles :
 - **HTTP MCP** — exposé sur `http://localhost:8000/mcp` pour les hosts qui préfèrent HTTP.
 
 Outils exposés par les deux transports : `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_download_status`, `qbitlarr_render_downloads_status`, `qbitlarr_render_download_status`, `qbitlarr_pause_download`, `qbitlarr_resume_download`, `qbitlarr_delete_download`, `qbitlarr_watch_download`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
+
+Le wrapper MCP stdio peut aussi envoyer des **notifications de fin uniques** vers des cibles de style Hermes :
+
+- Passez `notification_target` (par exemple `telegram:123456789`) lors de l'ajout d'un torrent. qBitlarr surveille le hash, publie un message de progression, le rafraîchit selon l'intervalle de watch, puis envoie un message à cette cible à 100 %. Si `user_id` / `requester_id` est déjà une cible Hermes, elle est réutilisée automatiquement ; les bots multi-utilisateurs ont rarement besoin de passer `notification_target` séparément.
+- Le même `user_id` / `requester_id` par utilisateur limite les vérifications de statut aux torrents tagués pour cet utilisateur.
+- Pour les flux manuels, appelez `qbitlarr_watch_download` avec un hash connu ; passez `completion_followup_message` pour ajouter une ligne indiquant ce qui commence ensuite, par exemple le traitement des sous-titres.
+- L'édition de progression Telegram lit `QBITLARR_TELEGRAM_BOT_TOKEN`, puis `QBITLARR_HERMES_ENV_PATH`, `HERMES_HOME/.env`, `~/.hermes/.env` ; avec plusieurs bots, pointez `QBITLARR_HERMES_ENV_PATH` vers le `.env` du profil concerné.
+- `QBITLARR_COMPLETION_HOOK_COMMAND` lance une commande locale après la fin ou la suppression d'un téléchargement surveillé ; qBitlarr envoie d'abord le message utilisateur, puis écrit un événement JSON `download_complete` / `download_removed` sur stdin. Les échecs de hook sont retentés sans masquer la notification utilisateur.
 
 Si `QBITLARR_API_KEY` est défini, les deux transports exigent un header `X-API-Key`. Le MCP stdio lit la même variable d'environnement.
 
@@ -275,7 +316,7 @@ Le schéma est identique — tous supportent l'un ou l'autre, voire les deux tra
 
 Si votre agent expose un system prompt ou un champ "tool instructions", ajoutez une courte indication pour qu'il pense à qBitlarr au bon moment :
 
-> *Quand l'utilisateur demande à télécharger un film, une série ou un anime auquel il est autorisé à accéder, utilise les outils MCP qbitlarr. Par défaut, appelle `qbitlarr_handle` — il accepte les IDs IMDb, les URLs IMDb et le texte libre, et décide tout seul s'il faut auto-choisir ou renvoyer une liste. Ne reviens à `qbitlarr_search` + `qbitlarr_download` que quand l'utilisateur veut explicitement choisir dans une liste.*
+> *Quand l'utilisateur demande à télécharger un film, une série ou un anime auquel il est autorisé à accéder, utilise les outils MCP qbitlarr. Par défaut, appelle `qbitlarr_handle` — il accepte les IDs IMDb, les URLs IMDb, les liens ou IDs de films Douban pris en charge, les liens ou IDs de films AlloCine pris en charge, et les titres en texte libre. Par défaut, il renvoie des choix de releases classés ; si un mot-clé correspond à plusieurs titres, il renvoie d'abord un court sélecteur de titres ; s'il renvoie `needs_imdb`, demande à l'utilisateur un lien IMDb. Ne reviens à `qbitlarr_search` + `qbitlarr_download` que pour un contrôle manuel avancé.*
 
 Cela aide les agents qui ne savaient pas que vous aviez un downloader connecté.
 
@@ -291,13 +332,17 @@ La CLI est un client léger pour la même API REST que celle utilisée par MCP. 
 
 ```sh
 bin/qbitlarr handle "tt0045877"
+bin/qbitlarr handle "douban:1292052"
+bin/qbitlarr handle "https://www.allocine.fr/film/fichefilm_gen_cfilm=25801.html"
 bin/qbitlarr handle "The Hitch-Hiker" --mode manual
+bin/qbitlarr handle "The Hitch-Hiker" --user-id telegram:123456789
 bin/qbitlarr handle "The Hitch-Hiker" --mode manual --json
 bin/qbitlarr search --query "The Hitch-Hiker 1953 1080p" | jq '.[0]'
-bin/qbitlarr download 'magnet:?xt=urn:btih:...'
-bin/qbitlarr downloads --watch
-bin/qbitlarr downloads --render
-bin/qbitlarr download-status abcdef1234567890 --render
+bin/qbitlarr download 'magnet:?xt=urn:btih:...' --user-id telegram:123456789
+bin/qbitlarr downloads --watch --user-id telegram:123456789
+bin/qbitlarr downloads --render --user-id telegram:123456789
+bin/qbitlarr download-status abcdef1234567890 --user-id telegram:123456789
+bin/qbitlarr download-status abcdef1234567890 --render --user-id telegram:123456789
 bin/qbitlarr health --deep
 bin/qbitlarr indexers
 ```
@@ -338,7 +383,7 @@ curl http://localhost:8000/prowlarr/indexers
 
 ## Chemins de sauvegarde
 
-Les auto-downloads de `/handle` choisissent un chemin selon le type de média et la résolution :
+`/handle` choisit un chemin de sauvegarde pour chaque téléchargement ajouté à la file selon le type de média et la résolution :
 
 - `QBITLARR_SAVE_PATH_MOVIE=/downloads/movies`
 - `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`
@@ -349,26 +394,6 @@ Les téléchargements de séries créent un dossier par série sous le chemin TV
 `/handle` et `/download` acceptent aussi un champ optionnel `save_path` pour les remplacements ponctuels. Ces chemins doivent se trouver sous l'une des racines configurées ci-dessus, ou sous une entrée de `QBITLARR_EXTRA_SAVE_PATHS` séparée par des virgules, par exemple `/media/Kids`.
 
 Quand `save_path` est omis, `/handle` et `/download` utilisent les chemins par défaut configurés dans qBitlarr. `/download` déduit la destination depuis les métadonnées du torrent ou le display name du magnet, afin que les sélections manuelles issues des résultats de recherche arrivent aussi dans le chemin film, film 4K ou série, plutôt que dans le dossier global par défaut de qBittorrent.
-
-## Nettoyage des tâches terminées
-
-qBitlarr peut supprimer périodiquement les tâches qBittorrent terminées qu'il gère, tout en conservant les fichiers téléchargés. Les nouveaux téléchargements qBitlarr reçoivent le tag `qbitlarr.managed` ; les anciens tags `requester.*` peuvent aussi être inclus par compatibilité.
-
-Désactivé par défaut. Activez et ajustez avec ces variables :
-
-```sh
-QBITLARR_CLEANUP_ENABLED=false
-QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200
-QBITLARR_CLEANUP_INTERVAL_SECONDS=21600
-QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS=true
-```
-
-Notes :
-
-- `QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200` nettoie les tâches terminées depuis au moins 3 jours.
-- `QBITLARR_CLEANUP_INTERVAL_SECONDS=21600` vérifie toutes les 6 heures.
-- Le nettoyage appelle qBittorrent avec `delete_files=false`, donc il supprime seulement la tâche, pas les fichiers média.
-- Les torrents non gérés, sans tag `qbitlarr.managed` ni ancien tag `requester.*`, sont ignorés.
 
 ## API REST
 
@@ -401,59 +426,22 @@ curl -X POST http://localhost:8000/download \
 
 ```
 qbitlarr/
-├── app/                          Service FastAPI, l'implémentation canonique
-│   ├── main.py                   Entrée de l'app, monte les routers et HTTP MCP sur /mcp
-│   ├── config.py                 Réglages par variables d'environnement
-│   ├── models.py                 Schémas Pydantic de requête/réponse
-│   ├── exceptions.py
-│   ├── client.py                 Client HTTP async partagé par CLI et MCP
-│   ├── cli.py                    CLI argparse `qbitlarr`
-│   ├── api/                      Handlers des endpoints REST
-│   │   ├── handle.py             /handle, orchestration principale : recherche → classement → file
-│   │   ├── search.py             /search, passthrough Prowlarr brut
-│   │   ├── download.py           /download, ajout d'un lien connu
-│   │   ├── downloads_list.py     /downloads, état qBittorrent
-│   │   ├── query_snapshots.py    /queries/{id}, snapshots de recherche sauvegardés
-│   │   └── prowlarr.py           /prowlarr/indexers, découverte d'indexeurs
-│   ├── domain/                   Logique pure, sans I/O
-│   │   ├── choice_table.py       Tables monospace de candidats pour agents/chats
-│   │   ├── download_progress.py  Cartes de statut emoji, watch policy, boutons
-│   │   ├── quality.py            Parsing de titres, scoring, QualityPreferences
-│   │   ├── save_paths.py         Choix du dossier qBittorrent selon le type média
-│   │   ├── search_results.py     Normalisation des résultats Prowlarr
-│   │   └── torrent_metadata.py   Décodage de fichiers .torrent pour vérification
-│   └── services/                 Clients de services externes
-│       ├── prowlarr.py
-│       ├── qbittorrent.py
-│       ├── query_snapshots.py
-│       └── wikidata.py
-├── mcp_server/
-│   ├── notifications.py          Watcher de fin, édition Telegram, hook runner
-│   └── server.py                 Serveur MCP stdio, wrappers fins autour de app/client.py
-├── bin/
-│   ├── qbitlarr                  Launcher CLI
-│   └── qbitlarr-mcp              Launcher du serveur MCP stdio
-├── tests/                        Suite pytest
-├── docs/
-│   ├── architecture.png
-│   ├── architecture.svg
-│   └── screenshots/              Captures d'écran du README
-├── docker-compose.yml            Inclut qbitlarr + prowlarr + flaresolverr
-├── Dockerfile                    Construit l'image qbitlarr
-├── requirements.txt
-├── .env.example                  À copier vers .env puis remplir
-├── README.md                     README anglais
-├── README.zh-CN.md               README chinois simplifié
-└── README.fr.md                  README français
+├── app/            Service FastAPI — API REST, CLI, et logique canonique
+│   ├── api/        Handlers REST (handle, search, download, ...)
+│   ├── domain/     Logique pure : classement, chemins, tables de choix, cartes de progression
+│   └── services/   Clients externes : prowlarr, qbittorrent, wikidata
+├── mcp_server/     Serveur MCP stdio (wrappers fins autour de app/client.py)
+├── bin/            Launchers `qbitlarr` et `qbitlarr-mcp`
+├── tests/          Suite pytest
+├── docs/           Diagramme d'architecture + captures README
+└── docker-compose.yml, Dockerfile, .env.example, README*.md
 ```
 
-**Où se trouvent les parties importantes :**
+L'API REST est la surface canonique ; la CLI et le MCP stdio sont des clients fins de `app/client.py`. L'essentiel de la logique vit dans `app/api/handle.py` (orchestration : identifier → classer → ajouter à la file) et `app/domain/quality.py` (classement pur, sans réseau).
 
-- **`app/api/handle.py`** contient la logique centrale : détection IMDb, cascade primary/fallback d'indexeurs, classement, modes (`auto`/`manual`/`confirm`).
-- **`app/domain/quality.py`** est la couche pure de scoring/classement, sans appels réseau. Modifiez ce fichier si vous voulez changer la façon dont les releases sont choisies.
-- **`app/domain/download_progress.py`** rend les cartes de progression emoji et déclare la politique de rafraîchissement bornée utilisée par les adaptateurs de chat.
-- **`app/client.py`** est le seul client HTTP. La CLI (`app/cli.py`) et le MCP stdio (`mcp_server/server.py`) l'utilisent tous les deux, ce qui garde un comportement cohérent entre les interfaces.
-- **L'API REST est la surface canonique.** MCP et CLI sont tous les deux des clients de cette API. Si vous intégrez qBitlarr dans un autre système, appelez directement les endpoints REST.
+## Pair With Babelarr For Subtitles
+
+qBitlarr gère l'acquisition ; associez-le à [Babelarr](https://github.com/davezfr/babelarr) pour préparer les sous-titres après la fin d'un téléchargement. Quand les deux serveurs MCP sont disponibles pour un même agent, *"Download The Hitch-Hiker and add Chinese-English subtitles"* devient : qBitlarr met le film en file, puis dès qu'un chemin local existe Babelarr trouve ou télécharge un sous-titre source, le traduit, et écrit le sidecar SRT/ASS. Pour une file plus durable, exposez aussi le Runtime MCP de Babelarr : il mémorise le téléchargement et déclenche Babelarr quand le chemin est prêt.
 
 ## Projets tiers
 

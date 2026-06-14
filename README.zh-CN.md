@@ -8,10 +8,10 @@
 
 qBitlarr 是一个小型 FastAPI 服务，可以：
 
-- 接收自然语言、IMDb ID 或 IMDb URL。
-- 通过你的 Prowlarr indexer 搜索资源。
-- 按可配置的质量偏好自动挑选更合适的发布版本。
-- 把任务加入你现有的 qBittorrent。
+- 接收自然语言标题、IMDb ID，或 IMDb / Douban / AlloCine 链接。
+- 先识别具体标题，再通过你的 Prowlarr indexer 搜索资源。
+- 按可配置的质量偏好排序发布版本，并把前几个候选展示给你选择。
+- 把你的选择加入现有 qBittorrent（或在 `auto` 模式下自动选择最佳版本）。
 - 同时暴露 REST、MCP 和小型 CLI，方便接入 Claude Desktop、Cursor、ChatGPT custom tools、Telegram bot、shell 脚本、cron job 或你自己的 Agent。
 
 可通过任意 HTTP client、Claude/Cursor/ChatGPT 的 MCP，或 `qbitlarr` CLI 使用。
@@ -81,31 +81,40 @@ curl 'http://localhost:8000/health?deep=true'
 
 把 qBitlarr 接到你的 Agent 上（或者直接用 CLI）之后，你就可以像跟懂你媒体库的朋友说话一样跟它沟通：
 
+对于电影请求，qBitlarr 可以直接接受 IMDb 链接和 ID，也可以把支持的 Douban 电影链接/ID、AlloCine 电影链接/ID 解析到同一条 IMDb 流程里。如果 Douban 或 AlloCine 电影无法可靠解析，qBitlarr 会要求用户提供 IMDb，而不是猜测。
+
 下面的示例使用 [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt0045877/)，这是一部被 Library of Congress 收录在 [Public Domain Films from the National Film Registry](https://www.loc.gov/free-to-use/public-domain-films-from-the-national-film-registry/) 列表中的 public-domain film。权利状态仍可能因司法辖区、具体修复版、配乐、字幕或版本而不同。
 
 <table>
   <tr>
     <td width="50%">
       <img src="docs/screenshots/telegram-imdb-share.jpg" alt="Telegram 示例：把 The Hitch-Hiker 的 IMDb 页面分享给 Agent，Agent 通过 qBitlarr 开始下载。">
-      <br>
-      <em>截图示例仅供参考。图中使用的基础标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐或字幕而不同。</em>
     </td>
     <td width="50%">
       <img src="docs/screenshots/telegram-public-domain-selection.jpg" alt="Telegram 示例：选择并查看 Night of the Living Dead 1968 下载状态。">
-      <br>
-      <em>截图示例仅供参考。图中使用的基础标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐或字幕而不同。</em>
     </td>
   </tr>
 </table>
 
+*截图示例仅供参考。图中标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐、字幕或版本而不同。*
+
 > **你：** *帮我下载 The Hitch-Hiker。*
-> **Agent：** 已开始自动下载 The Hitch-Hiker 的 1080p WEB-DL H.264 版本。
+> **Agent：** 有几个标题可能匹配，你想要哪一个？
+>   1. The Hitch-Hiker (1953)
+>   2. The Hitchhiker's Guide to the Galaxy (2005)
 
-> **你：** *帮我下载 IMDb 上的 tt0045877。*
-> **Agent：** 已开始自动下载 The Hitch-Hiker 的 1080p WEB-DL H.264 版本。
+> **你：** *第一个。*
+> **Agent：** 这里是排名靠前的发布版本，回复编号即可：
+>   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
+>   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 
-> **你：** *我想要 4K 的 The Hitch-Hiker。*
-> **Agent：** 已开始自动下载 The Hitch-Hiker 的 2160p UHD BluRay REMUX H.265 版本。
+> **你：** *下载 tt0045877* — IMDb ID 或链接会直接进入发布版本选择。
+> **Agent：** 这里是排名靠前的发布版本，回复编号即可：
+>   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
+>   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+
+> **你：** *选 1，而且我要 4K。*
+> **Agent：** The Hitch-Hiker (2160p) 已开始下载，当前有 50 个 seeders。你可以随时询问下载状态。
 
 > **你：** *现在在下载什么？*
 > **Agent：** ⬇️ The Hitch-Hiker<br>
@@ -114,13 +123,7 @@ curl 'http://localhost:8000/health?deep=true'
 > ⚡ Speed: 8.4 MB/s<br>
 > ⏱️ ETA: 6m
 
-> **你：** *帮我找 The Hitch-Hiker，但我自己挑版本。*
-> **Agent：** 这里是热门结果，回复编号即可：
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
->   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
-
-幕后逻辑：当 Agent 拿到明确标题时，会自动挑选 seeders 足够的最佳 1080p 版本并加入 qBittorrent 队列；当标题模糊（纯关键词搜索）时，会返回排序后的列表等你选择。状态查询既可以通过 `qbitlarr_list_downloads` / `qbitlarr_get_download_status` 拉取原始 qBittorrent 数据，也可以通过 `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status` 直接拿到适合聊天窗口的 emoji 进度卡片。渲染后的状态使用 10 格 emoji 进度条：下载中用 🟩，暂停用 🟧，错误用 🟥，空格用 ⬜，完成用 ✅。单个下载状态还可以返回 Telegram callback 按钮，用于暂停/继续和删除；适配层应使用返回的 `callback_data`，并校验 requester ID。渲染后的状态会带一个有限动态刷新策略：进度卡片应作为单独状态消息展示，每 3 秒刷新同一条状态消息，最多 15 分钟；进度变化小于 3 个百分点时可以跳过；超时后把同一条消息改成 “Still downloading. Ask for status again to refresh; completion will still notify you.” 完成通知是独立逻辑，下载到 100% 时仍然会发送；如果调用方已经挂了后续流程，也可以附加一行提示，例如准备开始字幕处理。直接编辑 Telegram 进度消息时，token 会按 `QBITLARR_TELEGRAM_BOT_TOKEN`、`QBITLARR_HERMES_ENV_PATH`、`HERMES_HOME/.env`、`~/.hermes/.env` 的顺序读取；如果同一台机器上有多个 Hermes profile/bot，应把 `QBITLARR_HERMES_ENV_PATH` 指到当前 profile 的 `.env`。stdio MCP 还可以通过 `QBITLARR_COMPLETION_HOOK_COMMAND` 在下载完成或下载任务完成前被删除时运行一个本地命令；qBitlarr 会先发送用户可见的完成/删除通知，再把 `download_complete` 或 `download_removed` 事件 JSON 写入该命令的 stdin，hook 失败只会重试后续流程，不会挡住用户可见通知。你也可以在请求里加 *"4K"*、*"Remux"*、*"720p HEVC"* 来覆盖默认画质偏好。
+幕后逻辑：每个请求都会先解析到一个具体标题。IMDb / Douban / AlloCine 链接或 ID 会直接锁定标题；普通关键词会先通过 Wikidata 匹配，如果命中多个标题，Agent 会先问你指的是哪一个，再展示发布版本。如果没有匹配，qBitlarr 会要求 IMDb 链接，而不是猜测。标题确定后，它会排序发布版本并返回前几个候选；在 `auto` 模式下则会直接加入最佳版本。你可以随时说 *"4K"*、*"Remux"* 或 *"720p HEVC"* 来覆盖默认质量偏好。状态可以返回原始数据（`qbitlarr_list_downloads` / `qbitlarr_get_download_status`），也可以返回适合聊天窗口的 emoji 进度卡片（`qbitlarr_render_*`）；刷新和完成通知细节见 [接入 Agent](#接入-agent)。
 
 ### Pro tip：直接从 IMDb 应用分享
 
@@ -130,7 +133,7 @@ curl 'http://localhost:8000/health?deep=true'
 2. 点分享 → 选择你 Agent 所在的聊天应用（Telegram、WhatsApp、Discord、Signal、iMessage 等）。
 3. Agent 收到的就是类似 `https://www.imdb.com/title/tt0045877/` 的链接，能自动识别标题 — 不用打字、不会拼错、毫无歧义。
 
-如果手头有原始的 IMDb ID（比如 `tt0045877`）也一样能用。qBitlarr 会提取 ID，对你的 indexer 做精确查询，并在几秒内把最佳匹配加入队列。
+如果手头有原始的 IMDb ID（比如 `tt0045877`）也一样能用。qBitlarr 也支持 `douban:1292052` 和 `allocine:25801` 这类受支持的电影 ID。它会解析这些 ID，并直接跳到该标题的发布版本候选列表，不再做标题匹配。
 
 ## 什么时候用它，而不是 Sonarr / Radarr
 
@@ -205,15 +208,45 @@ QBITLARR_MIN_SEEDERS=5
 - `"The Hitch-Hiker Remux"` → 强制 Remux 版本
 - `"The Hitch-Hiker 720p HEVC"` → 720p H.265
 
-## 输出模式
+## 请求如何被解析
 
-`POST /handle` 接受可选的 `mode` 字段，用来控制收到 IMDb ID 后的行为：
+每个 `/handle` 请求都会走同一条路径，所以关键词和 IMDb 链接最终会进入同一个流程：
 
-- `auto`（默认）— 选择最佳版本并加入下载队列。适合朋友/家人这种“直接帮我处理”的使用方式。
-- `manual` — 总是返回排序后的候选列表，不会自动加入队列。适合想自己选择的高级用户。
-- `confirm` — 返回首选项和备选项，但不加入队列。适合需要用户确认后再执行的 Agent 流程。
+1. **识别标题。** IMDb ID/URL 或受支持的 Douban/AlloCine 链接会直接解析。普通关键词会通过 Wikidata 匹配（不需要 API key 或额外账号）。如果命中多个标题，qBitlarr 返回 `choose_title` 列表（标题 + 年份）并等待用户选择；如果没有匹配，返回 `needs_imdb` 并要求 IMDb 链接。
+2. **排序发布版本。** 对这个具体标题，按你的质量偏好排序。
+3. **返回前 5 个左右的发布版本候选** 让用户选择；或者在 `auto` 模式下直接加入最佳版本。
 
-可以通过 `QBITLARR_DEFAULT_MODE=auto|manual|confirm` 修改服务默认模式。自动下载响应里总会带一个 `alternatives` 列表，包含 2–3 个备选结果，方便 Agent 不用再次调用工具就能问“或者你是想要这个吗？”。
+Wikidata 关键词匹配是有意保持轻量的，所以冷门标题可能无法解析；这种情况下 qBitlarr 会要求 IMDb 链接，而不是猜测。
+
+### 输出模式
+
+`POST /handle` 接受可选的 `mode` 字段：
+
+- `manual`（默认）— 返回排序后的发布版本候选，不会自动加入队列。
+- `auto` — 直接加入最佳版本。适合朋友/家人这种“直接帮我处理”的使用方式；响应里会带一个 `alternatives` 列表，包含 2–3 个备选结果，方便 Agent 问“或者你是想要这个吗？”。
+- `confirm` — 返回首选项和备选项，但不加入队列。
+
+可以通过 `QBITLARR_DEFAULT_MODE=manual|auto|confirm` 修改服务默认模式。
+
+## 已完成任务清理
+
+qBitlarr 可以定期清理自己管理的 qBittorrent 已完成任务，同时保留下载好的文件。新加入的 qBitlarr 任务会带 `qbitlarr.managed` 标签；为了兼容旧任务，也可以把历史 `requester.*` 标签纳入清理范围。
+
+默认关闭。可通过环境变量开启和调整：
+
+```sh
+QBITLARR_CLEANUP_ENABLED=false
+QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200
+QBITLARR_CLEANUP_INTERVAL_SECONDS=21600
+QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS=true
+```
+
+说明：
+
+- `QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200` 表示完成满 3 天后清理任务。
+- `QBITLARR_CLEANUP_INTERVAL_SECONDS=21600` 表示每 6 小时检查一次。
+- 清理时调用 qBittorrent 的 `delete_files=false`，只删除任务，不删除媒体文件。
+- 没有 `qbitlarr.managed` 或历史 `requester.*` 标签的非 qBitlarr 任务会被忽略。
 
 ## 接入 Agent
 
@@ -227,6 +260,14 @@ MCP 工具本身不绑定语言。你用什么语言问，Agent 通常就可以�
 - **HTTP MCP**：服务在 `http://localhost:8000/mcp`，适合更喜欢 HTTP 的 host。
 
 两种方式暴露的工具相同：`qbitlarr_handle`、`qbitlarr_search`、`qbitlarr_download`、`qbitlarr_list_downloads`、`qbitlarr_get_download_status`、`qbitlarr_render_downloads_status`、`qbitlarr_render_download_status`、`qbitlarr_pause_download`、`qbitlarr_resume_download`、`qbitlarr_delete_download`、`qbitlarr_watch_download`、`qbitlarr_get_query_snapshot`、`qbitlarr_list_prowlarr_indexers`、`qbitlarr_health`。
+
+stdio MCP wrapper 还可以向 Hermes 风格目标发送 **一次性完成通知**：
+
+- 加入 torrent 时传 `notification_target`（例如 `telegram:123456789`）。qBitlarr 会 watch 该 hash，发送一条进度消息，按 watch interval 刷新，并在 100% 时通知同一目标。如果 `user_id` / `requester_id` 已经是 Hermes target，会自动复用；多用户 bot 通常不需要单独传 `notification_target`。
+- 同一个 per-user `user_id` / `requester_id` 也会把状态查询限制在该用户打过标签的 torrents 内。
+- 手动流程可以用已知 hash 调用 `qbitlarr_watch_download`；传 `completion_followup_message` 可以追加一行“下一步会开始什么”（例如字幕处理）。
+- Telegram 进度编辑会依次读取 `QBITLARR_TELEGRAM_BOT_TOKEN`、`QBITLARR_HERMES_ENV_PATH`、`HERMES_HOME/.env`、`~/.hermes/.env`；如果运行多个 bot，请把 `QBITLARR_HERMES_ENV_PATH` 指到对应 profile 的 `.env`。
+- `QBITLARR_COMPLETION_HOOK_COMMAND` 会在 watched download 完成或被删除后运行本地命令；qBitlarr 先发送用户可见消息，再把 `download_complete` / `download_removed` JSON 事件写入该命令的 stdin。Hook 失败会重试，但不会隐藏用户通知。
 
 如果设置了 `QBITLARR_API_KEY`，两种 transport 都需要 `X-API-Key` header。stdio MCP 会从同名环境变量读取。
 
@@ -275,7 +316,7 @@ MCP 工具本身不绑定语言。你用什么语言问，Agent 通常就可以�
 
 如果你的 Agent 支持 system prompt 或 “tool instructions” 字段，加一段简短提示，让它在合适的场景调用 qBitlarr：
 
-> *当用户想要下载其有权访问的电影、剧集或动漫时，使用 qbitlarr 的 MCP 工具。默认调用 `qbitlarr_handle` — 它能处理 IMDb ID、IMDb URL 和自由文本标题，会自动决定是直接下载还是返回候选列表。只在用户明确想从列表里挑选时才退回到 `qbitlarr_search` + `qbitlarr_download`。*
+> *当用户想要下载其有权访问的电影、剧集或动漫时，使用 qbitlarr 的 MCP 工具。默认调用 `qbitlarr_handle` — 它能处理 IMDb ID、IMDb URL、受支持的 Douban 电影链接或 ID、受支持的 AlloCine 电影链接或 ID，以及自由文本标题。默认会返回排序后的发布版本候选供用户选择；如果关键词命中多个标题，会先返回一个简短标题选择列表；如果返回 `needs_imdb`，请向用户索要 IMDb 链接。只有在高级手动控制场景下，才退回到 `qbitlarr_search` + `qbitlarr_download`。*
 
 这能提醒那些原本不知道你有下载工具的 Agent。
 
@@ -291,13 +332,17 @@ CLI 是同一个 REST API 的轻量客户端，MCP 也用这套接口。它会�
 
 ```sh
 bin/qbitlarr handle "tt0045877"
+bin/qbitlarr handle "douban:1292052"
+bin/qbitlarr handle "https://www.allocine.fr/film/fichefilm_gen_cfilm=25801.html"
 bin/qbitlarr handle "The Hitch-Hiker" --mode manual
+bin/qbitlarr handle "The Hitch-Hiker" --user-id telegram:123456789
 bin/qbitlarr handle "The Hitch-Hiker" --mode manual --json
 bin/qbitlarr search --query "The Hitch-Hiker 1953 1080p" | jq '.[0]'
-bin/qbitlarr download 'magnet:?xt=urn:btih:...'
-bin/qbitlarr downloads --watch
-bin/qbitlarr downloads --render
-bin/qbitlarr download-status abcdef1234567890 --render
+bin/qbitlarr download 'magnet:?xt=urn:btih:...' --user-id telegram:123456789
+bin/qbitlarr downloads --watch --user-id telegram:123456789
+bin/qbitlarr downloads --render --user-id telegram:123456789
+bin/qbitlarr download-status abcdef1234567890 --user-id telegram:123456789
+bin/qbitlarr download-status abcdef1234567890 --render --user-id telegram:123456789
 bin/qbitlarr health --deep
 bin/qbitlarr indexers
 ```
@@ -338,7 +383,7 @@ curl http://localhost:8000/prowlarr/indexers
 
 ## 保存路径
 
-`/handle` 自动下载会按媒体类型和分辨率选择保存路径：
+`/handle` 会按媒体类型和分辨率为每个加入队列的下载选择保存路径：
 
 - `QBITLARR_SAVE_PATH_MOVIE=/downloads/movies`
 - `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`
@@ -349,26 +394,6 @@ curl http://localhost:8000/prowlarr/indexers
 `/handle` 和 `/download` 都接受可选的 `save_path` 字段，用于单次覆盖。覆盖路径必须位于上面配置的目录内，或位于逗号分隔的 `QBITLARR_EXTRA_SAVE_PATHS` 额外允许目录内，例如 `/media/Kids`。
 
 当省略 `save_path` 时，`/handle` 和 `/download` 会使用 qBitlarr 配置的默认路径。`/download` 会根据 torrent metadata 或 magnet display name 推断目标类型，所以从搜索结果里手动选择的下载也会进入电影、4K 电影或剧集路径，而不是落到 qBittorrent 的全局默认下载目录。
-
-## 已完成任务清理
-
-qBitlarr 可以定期清理自己管理的 qBittorrent 已完成任务，同时保留下载好的文件。新加入的 qBitlarr 任务会带 `qbitlarr.managed` 标签；为了兼容旧任务，也可以把历史 `requester.*` 标签纳入清理范围。
-
-默认关闭。可通过环境变量开启和调整：
-
-```sh
-QBITLARR_CLEANUP_ENABLED=false
-QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200
-QBITLARR_CLEANUP_INTERVAL_SECONDS=21600
-QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS=true
-```
-
-说明：
-
-- `QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200` 表示完成满 3 天后清理任务。
-- `QBITLARR_CLEANUP_INTERVAL_SECONDS=21600` 表示每 6 小时检查一次。
-- 清理时调用 qBittorrent 的 `delete_files=false`，只删除任务，不删除媒体文件。
-- 没有 `qbitlarr.managed` 或历史 `requester.*` 标签的非 qBitlarr 任务会被忽略。
 
 ## REST API
 
@@ -401,59 +426,22 @@ curl -X POST http://localhost:8000/download \
 
 ```
 qbitlarr/
-├── app/                          FastAPI 服务，核心实现
-│   ├── main.py                   应用入口，挂载 router 和 /mcp HTTP MCP
-│   ├── config.py                 环境变量配置
-│   ├── models.py                 Pydantic 请求/响应 schema
-│   ├── exceptions.py
-│   ├── client.py                 CLI 和 MCP 共享的异步 HTTP client
-│   ├── cli.py                    `qbitlarr` argparse CLI
-│   ├── api/                      REST endpoint handlers
-│   │   ├── handle.py             /handle 主编排：搜索 → 排序 → 入队
-│   │   ├── search.py             /search 原始 Prowlarr passthrough
-│   │   ├── download.py           /download 加入已知链接
-│   │   ├── downloads_list.py     /downloads qBittorrent 状态
-│   │   ├── query_snapshots.py    /queries/{id} 搜索快照
-│   │   └── prowlarr.py           /prowlarr/indexers indexer 发现
-│   ├── domain/                   纯逻辑，无 I/O
-│   │   ├── choice_table.py       给 Agent/聊天窗口用的等宽候选表
-│   │   ├── download_progress.py  Emoji 状态卡片、watch policy、控制按钮
-│   │   ├── quality.py            标题解析、评分、QualityPreferences
-│   │   ├── save_paths.py         按媒体类型选择 qBittorrent 保存路径
-│   │   ├── search_results.py     Prowlarr 结果规范化
-│   │   └── torrent_metadata.py   .torrent 文件解码验证
-│   └── services/                 外部服务 client
-│       ├── prowlarr.py
-│       ├── qbittorrent.py
-│       ├── query_snapshots.py
-│       └── wikidata.py
-├── mcp_server/
-│   ├── notifications.py          完成 watcher、Telegram 状态编辑、hook runner
-│   └── server.py                 stdio MCP server，围绕 app/client.py 的薄封装
-├── bin/
-│   ├── qbitlarr                  CLI launcher
-│   └── qbitlarr-mcp              stdio MCP server launcher
-├── tests/                        pytest suite
-├── docs/
-│   ├── architecture.png
-│   ├── architecture.svg
-│   └── screenshots/              README 截图
-├── docker-compose.yml            打包 qbitlarr + prowlarr + flaresolverr
-├── Dockerfile                    构建 qbitlarr image
-├── requirements.txt
-├── .env.example                  复制为 .env 后填写
-├── README.md                     英文 README
-├── README.zh-CN.md               中文 README
-└── README.fr.md                  法文 README
+├── app/            FastAPI 服务 — REST API、CLI 和核心逻辑
+│   ├── api/        REST endpoint handlers（handle、search、download 等）
+│   ├── domain/     纯逻辑：排序、保存路径、候选表、进度卡片
+│   └── services/   外部 client：prowlarr、qbittorrent、wikidata
+├── mcp_server/     stdio MCP server（围绕 app/client.py 的薄封装）
+├── bin/            `qbitlarr` 和 `qbitlarr-mcp` launcher
+├── tests/          pytest suite
+├── docs/           架构图和 README 截图
+└── docker-compose.yml、Dockerfile、.env.example、README*.md
 ```
 
-**重要代码位置：**
+REST API 是 canonical surface；CLI 和 stdio MCP 都是 `app/client.py` 的薄 client。主要逻辑在 `app/api/handle.py`（编排：识别 → 排序 → 入队）和 `app/domain/quality.py`（纯排序，无网络调用）里。
 
-- **`app/api/handle.py`** 是主要逻辑所在：IMDb 检测、primary/fallback indexer cascade、排序、模式处理（`auto`/`manual`/`confirm`）。
-- **`app/domain/quality.py`** 是纯评分/排序层，没有网络调用。如果想改“怎么挑版本”，从这里开始。
-- **`app/domain/download_progress.py`** 渲染 emoji 进度卡片，并声明聊天适配层使用的有限动态刷新策略。
-- **`app/client.py`** 是唯一 HTTP client。CLI（`app/cli.py`）和 stdio MCP（`mcp_server/server.py`）都会调用它，所以不同入口的行为保持一致。
-- **REST API 是 canonical surface。** MCP 和 CLI 都只是它的 client。如果你要把 qBitlarr 嵌入到别的系统里，直接调用 REST endpoints。
+## Pair With Babelarr For Subtitles
+
+qBitlarr 负责获取媒体；如果下载完成后还要准备字幕，可以和 [Babelarr](https://github.com/davezfr/babelarr) 配合使用。当同一个 Agent 同时接入两个 MCP server 时，*"Download The Hitch-Hiker and add Chinese-English subtitles"* 就会变成：qBitlarr 先把电影加入下载队列，等它有了本地路径后，Babelarr 查找或下载源字幕、翻译字幕，并写出 SRT/ASS sidecar。需要更持久的队列时，也可以暴露 Babelarr 的 Runtime MCP server；它会记住下载任务，并在路径就绪后调度 Babelarr。
 
 ## 第三方项目
 
