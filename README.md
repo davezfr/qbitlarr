@@ -457,6 +457,35 @@ qbitlarr/
 - **`app/client.py`** is the only HTTP client. Both the CLI (`app/cli.py`) and the stdio MCP (`mcp_server/server.py`) call into it, so behavior stays consistent across interfaces.
 - **The REST API is the canonical surface.** MCP and CLI are both clients of it. If you're embedding qBitlarr in another system, hit the REST endpoints directly.
 
+## Demo: Pair With Babelarr For Subtitles
+
+qBitlarr handles media acquisition. If you also want subtitles prepared after a
+download finishes, pair it with [Babelarr](https://github.com/davezfr/babelarr).
+Babelarr can translate existing source subtitles, extract embedded text
+subtitles, or search online subtitle providers when no local source subtitle is
+available.
+
+When both MCP servers are available to the same agent, the user-facing workflow
+can stay simple:
+
+```text
+User:
+  Download The Hitch-Hiker and make Chinese-English subtitles.
+
+Agent:
+  1. Call qbitlarr_handle to search and queue the movie.
+  2. Watch qBitlarr status until the torrent has a completed local path.
+  3. Hand that path to Babelarr with a direct video subtitle job.
+  4. Let Babelarr find or download a source subtitle, translate it, and write
+     the final SRT or bilingual ASS sidecar.
+  5. Report that the video is downloaded and the subtitle sidecar is ready.
+```
+
+For a direct setup, the agent can call qBitlarr first and then call Babelarr
+with the completed video path. For a more durable queue, expose Babelarr's
+Runtime MCP server as well; it can remember the qBitlarr download, attach the
+subtitle request, and dispatch Babelarr when the local media path is ready.
+
 ## Third-Party Projects
 
 qBitlarr integrates with these third-party projects:
@@ -465,7 +494,8 @@ qBitlarr integrates with these third-party projects:
 - **[qBittorrent](https://github.com/qbittorrent/qBittorrent)** — GPL-2.0. qBitlarr expects you to provide qBittorrent separately and talks to it through its Web UI API.
 - **[FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)** — MIT. qBitlarr's Docker Compose setup includes it as an optional challenge proxy for Prowlarr indexers that need it.
 
-qBitlarr is not affiliated with, endorsed by, or sponsored by Prowlarr, qBittorrent, FlareSolverr, or their maintainers.
+qBitlarr is not affiliated with, endorsed by, or sponsored by Prowlarr,
+qBittorrent, FlareSolverr, or their maintainers.
 
 ## License
 
