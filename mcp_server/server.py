@@ -29,7 +29,7 @@ def create_mcp_server() -> FastMCP:
             "qbitlarr_handle returns query_id when a saved query snapshot is available. "
             "Use qbitlarr_search and qbitlarr_download only when manual control is needed. "
             "Use qbitlarr_render_downloads_status or qbitlarr_render_download_status when a user asks for download status; "
-            "these return a chat-ready progress bar and a bounded 5-second dynamic-refresh policy. "
+            "these return a chat-ready emoji progress card and a bounded 3-second dynamic-refresh policy. "
             "Use qbitlarr_pause_download, qbitlarr_resume_download, and qbitlarr_delete_download only for Telegram "
             "download-control callbacks, always passing the current Telegram user as requester_id. "
             "Use qbitlarr_list_prowlarr_indexers to discover indexer IDs for configuration."

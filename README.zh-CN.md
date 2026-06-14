@@ -109,10 +109,10 @@ curl 'http://localhost:8000/health?deep=true'
 
 > **你：** *现在在下载什么？*
 > **Agent：** ⬇️ The Hitch-Hiker<br>
-> ████████░░░░░░░░░░░░ 42%<br>
-> 3.4 GB / 8 GB<br>
-> Speed: 8.4 MB/s<br>
-> ETA: 6m
+> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 42%<br>
+> 💾 3.4 GB / 8 GB<br>
+> ⚡ Speed: 8.4 MB/s<br>
+> ⏱️ ETA: 6m
 
 > **你：** *帮我找 The Hitch-Hiker，但我自己挑版本。*
 > **Agent：** 这里是热门结果，回复编号即可：
@@ -120,7 +120,7 @@ curl 'http://localhost:8000/health?deep=true'
 >   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 >   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
 
-幕后逻辑：当 Agent 拿到明确标题时，会自动挑选 seeders 足够的最佳 1080p 版本并加入 qBittorrent 队列；当标题模糊（纯关键词搜索）时，会返回排序后的列表等你选择。状态查询既可以通过 `qbitlarr_list_downloads` / `qbitlarr_get_download_status` 拉取原始 qBittorrent 数据，也可以通过 `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status` 直接拿到适合聊天窗口的进度条文本。渲染后的状态会带一个有限动态刷新策略：进度条应作为单独状态消息展示，每 5 秒刷新同一条状态消息，最多 15 分钟；超时后把同一条消息改成 “Still downloading. Ask for status again to refresh; completion will still notify you.” 完成通知是独立逻辑，下载到 100% 时仍然会发送；如果调用方已经挂了后续流程，也可以附加一行提示，例如准备开始字幕处理。直接编辑 Telegram 进度消息时，token 会按 `QBITLARR_TELEGRAM_BOT_TOKEN`、`QBITLARR_HERMES_ENV_PATH`、`HERMES_HOME/.env`、`~/.hermes/.env` 的顺序读取；如果同一台机器上有多个 Hermes profile/bot，应把 `QBITLARR_HERMES_ENV_PATH` 指到当前 profile 的 `.env`。stdio MCP 还可以通过 `QBITLARR_COMPLETION_HOOK_COMMAND` 在下载完成或下载任务完成前被删除时运行一个本地命令；qBitlarr 会先发送用户可见的完成/删除通知，再把 `download_complete` 或 `download_removed` 事件 JSON 写入该命令的 stdin，hook 失败只会重试后续流程，不会挡住用户可见通知。你也可以在请求里加 *"4K"*、*"Remux"*、*"720p HEVC"* 来覆盖默认画质偏好。
+幕后逻辑：当 Agent 拿到明确标题时，会自动挑选 seeders 足够的最佳 1080p 版本并加入 qBittorrent 队列；当标题模糊（纯关键词搜索）时，会返回排序后的列表等你选择。状态查询既可以通过 `qbitlarr_list_downloads` / `qbitlarr_get_download_status` 拉取原始 qBittorrent 数据，也可以通过 `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status` 直接拿到适合聊天窗口的 emoji 进度卡片。渲染后的状态使用 10 格 emoji 进度条：下载中用 🟩，暂停用 🟧，错误用 🟥，空格用 ⬜，完成用 ✅。单个下载状态还可以返回 Telegram callback 按钮，用于暂停/继续和删除；适配层应使用返回的 `callback_data`，并校验 requester ID。渲染后的状态会带一个有限动态刷新策略：进度卡片应作为单独状态消息展示，每 3 秒刷新同一条状态消息，最多 15 分钟；进度变化小于 3 个百分点时可以跳过；超时后把同一条消息改成 “Still downloading. Ask for status again to refresh; completion will still notify you.” 完成通知是独立逻辑，下载到 100% 时仍然会发送；如果调用方已经挂了后续流程，也可以附加一行提示，例如准备开始字幕处理。直接编辑 Telegram 进度消息时，token 会按 `QBITLARR_TELEGRAM_BOT_TOKEN`、`QBITLARR_HERMES_ENV_PATH`、`HERMES_HOME/.env`、`~/.hermes/.env` 的顺序读取；如果同一台机器上有多个 Hermes profile/bot，应把 `QBITLARR_HERMES_ENV_PATH` 指到当前 profile 的 `.env`。stdio MCP 还可以通过 `QBITLARR_COMPLETION_HOOK_COMMAND` 在下载完成或下载任务完成前被删除时运行一个本地命令；qBitlarr 会先发送用户可见的完成/删除通知，再把 `download_complete` 或 `download_removed` 事件 JSON 写入该命令的 stdin，hook 失败只会重试后续流程，不会挡住用户可见通知。你也可以在请求里加 *"4K"*、*"Remux"*、*"720p HEVC"* 来覆盖默认画质偏好。
 
 ### Pro tip：直接从 IMDb 应用分享
 
@@ -226,7 +226,7 @@ MCP 工具本身不绑定语言。你用什么语言问，Agent 通常就可以�
 - **stdio MCP**：大多数桌面 Agent 应用偏好这种方式，它们会把 `bin/qbitlarr-mcp` 作为子进程启动。
 - **HTTP MCP**：服务在 `http://localhost:8000/mcp`，适合更喜欢 HTTP 的 host。
 
-两种方式暴露的工具相同：`qbitlarr_handle`、`qbitlarr_search`、`qbitlarr_download`、`qbitlarr_list_downloads`、`qbitlarr_get_download_status`、`qbitlarr_render_downloads_status`、`qbitlarr_render_download_status`、`qbitlarr_get_query_snapshot`、`qbitlarr_list_prowlarr_indexers`、`qbitlarr_health`。
+两种方式暴露的工具相同：`qbitlarr_handle`、`qbitlarr_search`、`qbitlarr_download`、`qbitlarr_list_downloads`、`qbitlarr_get_download_status`、`qbitlarr_render_downloads_status`、`qbitlarr_render_download_status`、`qbitlarr_pause_download`、`qbitlarr_resume_download`、`qbitlarr_delete_download`、`qbitlarr_watch_download`、`qbitlarr_get_query_snapshot`、`qbitlarr_list_prowlarr_indexers`、`qbitlarr_health`。
 
 如果设置了 `QBITLARR_API_KEY`，两种 transport 都需要 `X-API-Key` header。stdio MCP 会从同名环境变量读取。
 
@@ -383,6 +383,9 @@ QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS=true
 | GET | `/downloads/status-message` | 把所有匹配下载渲染成聊天进度条 |
 | GET | `/downloads/{info_hash}` | 按 info hash 读取一个 torrent |
 | GET | `/downloads/{info_hash}/status-message` | 把一个 torrent 渲染成聊天进度条 |
+| POST | `/downloads/{info_hash}/pause` | 暂停一个属于该 requester 的 torrent |
+| POST | `/downloads/{info_hash}/resume` | 继续一个属于该 requester 的 torrent |
+| POST | `/downloads/{info_hash}/delete` | 删除一个属于该 requester 的 qBittorrent 任务，不删除文件 |
 | GET | `/queries/{query_id}` | 重新读取保存过的搜索快照 |
 | GET | `/prowlarr/indexers` | 列出 Prowlarr indexer 和它们的 ID |
 
@@ -413,14 +416,19 @@ qbitlarr/
 │   │   ├── query_snapshots.py    /queries/{id} 搜索快照
 │   │   └── prowlarr.py           /prowlarr/indexers indexer 发现
 │   ├── domain/                   纯逻辑，无 I/O
+│   │   ├── choice_table.py       给 Agent/聊天窗口用的等宽候选表
+│   │   ├── download_progress.py  Emoji 状态卡片、watch policy、控制按钮
 │   │   ├── quality.py            标题解析、评分、QualityPreferences
+│   │   ├── save_paths.py         按媒体类型选择 qBittorrent 保存路径
 │   │   ├── search_results.py     Prowlarr 结果规范化
 │   │   └── torrent_metadata.py   .torrent 文件解码验证
 │   └── services/                 外部服务 client
 │       ├── prowlarr.py
 │       ├── qbittorrent.py
-│       └── query_snapshots.py
+│       ├── query_snapshots.py
+│       └── wikidata.py
 ├── mcp_server/
+│   ├── notifications.py          完成 watcher、Telegram 状态编辑、hook runner
 │   └── server.py                 stdio MCP server，围绕 app/client.py 的薄封装
 ├── bin/
 │   ├── qbitlarr                  CLI launcher
@@ -443,6 +451,7 @@ qbitlarr/
 
 - **`app/api/handle.py`** 是主要逻辑所在：IMDb 检测、primary/fallback indexer cascade、排序、模式处理（`auto`/`manual`/`confirm`）。
 - **`app/domain/quality.py`** 是纯评分/排序层，没有网络调用。如果想改“怎么挑版本”，从这里开始。
+- **`app/domain/download_progress.py`** 渲染 emoji 进度卡片，并声明聊天适配层使用的有限动态刷新策略。
 - **`app/client.py`** 是唯一 HTTP client。CLI（`app/cli.py`）和 stdio MCP（`mcp_server/server.py`）都会调用它，所以不同入口的行为保持一致。
 - **REST API 是 canonical surface。** MCP 和 CLI 都只是它的 client。如果你要把 qBitlarr 嵌入到别的系统里，直接调用 REST endpoints。
 

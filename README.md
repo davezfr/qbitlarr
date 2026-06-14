@@ -114,10 +114,10 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 
 > **You:** *What's downloading right now?*
 > **Agent:** ⬇️ The Hitch-Hiker<br>
-> ████████░░░░░░░░░░░░ 42%<br>
-> 3.4 GB / 8 GB<br>
-> Speed: 8.4 MB/s<br>
-> ETA: 6m
+> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 42%<br>
+> 💾 3.4 GB / 8 GB<br>
+> ⚡ Speed: 8.4 MB/s<br>
+> ⏱️ ETA: 6m
 
 > **You:** *Find me The Hitch-Hiker, but I want to pick the release.*
 > **Agent:** Here are the top results — reply with the number:
@@ -125,7 +125,7 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 >   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 >   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
 
-Behind the scenes: when the agent gets a clear title, it auto-picks the best 1080p release that has enough seeders and queues it in your qBittorrent. When the title is ambiguous (just a free-text search), it returns a ranked list and waits for your pick. Status answers can come back as raw data from `qbitlarr_list_downloads` / `qbitlarr_get_download_status`, or as chat-ready progress bars from `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status`. Rendered status responses include a bounded dynamic-refresh policy for Telegram-style bots: keep the progress bar in a separate status message, refresh that message every 5 seconds for up to 15 minutes, then edit it to "Still downloading. Ask for status again to refresh; completion will still notify you." Completion notifications remain separate and still fire when the torrent reaches 100%; callers can include a one-line follow-up message such as starting subtitle processing when a downstream workflow is already attached. In shared-bot setups, pass a stable per-user `user_id` / `requester_id` such as `telegram:<current user id>` so qBitlarr tags each torrent and status checks can be limited to that user's own downloads. You can always say *"4K"*, *"Remux"*, or *"720p HEVC"* to override the default quality.
+Behind the scenes: when the agent gets a clear title, it auto-picks the best 1080p release that has enough seeders and queues it in your qBittorrent. When the title is ambiguous (just a free-text search), it returns a ranked list and waits for your pick. Status answers can come back as raw data from `qbitlarr_list_downloads` / `qbitlarr_get_download_status`, or as chat-ready emoji progress cards from `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status`. Rendered status uses a 10-cell emoji bar: active downloads fill with 🟩, paused downloads use 🟧, errors use 🟥, empty cells are ⬜, and completed downloads show ✅. Single-download status responses can also include Telegram callback buttons for pause/resume and delete; adapters should use the returned `callback_data` and enforce the requester ID. Rendered status responses include a bounded dynamic-refresh policy for Telegram-style bots: keep the progress card in a separate status message, refresh that message every 3 seconds for up to 15 minutes, skip tiny updates unless progress changes by at least 3 percentage points, then edit it to "Still downloading. Ask for status again to refresh; completion will still notify you." Completion notifications remain separate and still fire when the torrent reaches 100%; callers can include a one-line follow-up message such as starting subtitle processing when a downstream workflow is already attached. In shared-bot setups, pass a stable per-user `user_id` / `requester_id` such as `telegram:<current user id>` so qBitlarr tags each torrent and status checks can be limited to that user's own downloads. You can always say *"4K"*, *"Remux"*, or *"720p HEVC"* to override the default quality.
 
 ### Pro tip: share straight from the movie app or website
 
@@ -251,7 +251,7 @@ Two transports are available:
 - **stdio MCP** — what most desktop agent apps want. They launch `bin/qbitlarr-mcp` as a subprocess.
 - **HTTP MCP** — served at `http://localhost:8000/mcp` for hosts that prefer HTTP.
 
-Tools exposed by both: `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_download_status`, `qbitlarr_render_downloads_status`, `qbitlarr_render_download_status`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
+Tools exposed by both: `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_download_status`, `qbitlarr_render_downloads_status`, `qbitlarr_render_download_status`, `qbitlarr_pause_download`, `qbitlarr_resume_download`, `qbitlarr_delete_download`, `qbitlarr_watch_download`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
 
 The stdio MCP wrapper also supports one-time completion notifications for Hermes-style messaging targets. Pass `notification_target` when queueing a torrent, such as `telegram:123456789`, and qBitlarr will watch that torrent hash, send one separate progress status message, refresh it on the watch interval, and send that same target a short message when the download reaches 100%. If `user_id` / `requester_id` is already a Hermes target like `telegram:<current user id>`, qBitlarr reuses it automatically for completion notifications, so multi-user bots usually do not need to pass `notification_target` separately. The same per-user `user_id` / `requester_id` also scopes follow-up status checks to that user's tagged torrents. For manual flows, agents can also call `qbitlarr_watch_download` with a known torrent hash. When a downstream workflow is already attached, pass `completion_followup_message` so the completion notice can also say what starts next, for example subtitle processing. Direct Telegram progress editing uses `QBITLARR_TELEGRAM_BOT_TOKEN`, `QBITLARR_HERMES_ENV_PATH`, `HERMES_HOME/.env`, then `~/.hermes/.env` in that order, so named Hermes profiles should point `QBITLARR_HERMES_ENV_PATH` at the profile `.env` if multiple bots are configured. Set `QBITLARR_COMPLETION_HOOK_COMMAND` to run an optional local command after a watched download reaches 100% or is removed before completion; qBitlarr sends the user-facing completion/removal message first, then writes a `download_complete` or `download_removed` event JSON document to that command's stdin. Hook failures are retried without suppressing the visible user notice.
 
@@ -394,6 +394,9 @@ When `save_path` is omitted, `/handle` and `/download` use qBitlarr's configured
 | GET | `/downloads/status-message` | Render all matching downloads as a chat progress message |
 | GET | `/downloads/{info_hash}` | Read one torrent by info hash |
 | GET | `/downloads/{info_hash}/status-message` | Render one torrent as a chat progress message |
+| POST | `/downloads/{info_hash}/pause` | Pause one requester-owned torrent |
+| POST | `/downloads/{info_hash}/resume` | Resume one requester-owned torrent |
+| POST | `/downloads/{info_hash}/delete` | Delete one requester-owned qBittorrent task without deleting files |
 | GET | `/queries/{query_id}` | Re-read a saved search snapshot |
 | GET | `/prowlarr/indexers` | List Prowlarr indexers with IDs |
 
@@ -424,14 +427,19 @@ qbitlarr/
 │   │   ├── query_snapshots.py    /queries/{id} — saved search snapshots
 │   │   └── prowlarr.py           /prowlarr/indexers — indexer discovery
 │   ├── domain/                   Pure logic, no I/O
+│   │   ├── choice_table.py       Monospace candidate tables for agents/chats
+│   │   ├── download_progress.py  Emoji status cards, watch policy, control buttons
 │   │   ├── quality.py            Title parsing, scoring, QualityPreferences
+│   │   ├── save_paths.py         Media-type-aware qBittorrent save path selection
 │   │   ├── search_results.py     Prowlarr result normalization
 │   │   └── torrent_metadata.py   .torrent file decoding for verification
 │   └── services/                 External-service clients
 │       ├── prowlarr.py
 │       ├── qbittorrent.py
-│       └── query_snapshots.py
+│       ├── query_snapshots.py
+│       └── wikidata.py
 ├── mcp_server/
+│   ├── notifications.py          Completion watcher, Telegram status edits, hook runner
 │   └── server.py                 stdio MCP server — thin wrappers around app/client.py
 ├── bin/
 │   ├── qbitlarr                  Launcher for the CLI
@@ -454,6 +462,7 @@ qbitlarr/
 
 - **`app/api/handle.py`** is where the interesting logic happens — IMDb detection, primary/fallback indexer cascade, ranking, mode handling (`auto`/`manual`/`confirm`).
 - **`app/domain/quality.py`** is the pure scoring/ranking layer — no network calls. Tune this if you want to change *how* releases are picked.
+- **`app/domain/download_progress.py`** renders the emoji progress cards and declares the bounded dynamic-refresh policy used by chat adapters.
 - **`app/client.py`** is the only HTTP client. Both the CLI (`app/cli.py`) and the stdio MCP (`mcp_server/server.py`) call into it, so behavior stays consistent across interfaces.
 - **The REST API is the canonical surface.** MCP and CLI are both clients of it. If you're embedding qBitlarr in another system, hit the REST endpoints directly.
 
