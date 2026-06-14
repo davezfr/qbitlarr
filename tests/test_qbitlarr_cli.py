@@ -30,7 +30,10 @@ class FakeClient:
             "action": "auto_download",
             "title": "The Hitch-Hiker (1953)",
             "quality": "1080p WEB-DL H.264",
-            "message": "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264.",
+            "message": (
+                "The Hitch-Hiker (1953) is now downloading with 9 seeders. "
+                "You can ask for a status update any time."
+            ),
         }
 
     async def search(self, *, identifier=None, query=None, categories=None, indexer_ids=None):
@@ -47,13 +50,43 @@ class FakeClient:
         )
         return [{"title": "The.General.1926.1080p.WEB-DL.H.264-GRP", "seeders": 42}]
 
-    async def download(self, download_link, save_path=None):
-        self.calls.append(("download", {"download_link": download_link, "save_path": save_path}))
+    async def download(self, download_link, save_path=None, query_id=None, user_id=None):
+        self.calls.append(
+            (
+                "download",
+                {
+                    "download_link": download_link,
+                    "save_path": save_path,
+                    "query_id": query_id,
+                    "user_id": user_id,
+                },
+            )
+        )
         return {"status": "success", "message": "Download queued"}
 
-    async def list_downloads(self):
-        self.calls.append(("downloads", {}))
+    async def list_downloads(self, user_id=None):
+        self.calls.append(("downloads", {"user_id": user_id}))
         return [{"name": "Ubuntu 24.04", "state": "downloading", "progress": 0.5}]
+
+    async def get_download_status(self, info_hash, user_id=None):
+        self.calls.append(("download-status", {"info_hash": info_hash, "user_id": user_id}))
+        return {"name": "Ubuntu 24.04", "state": "downloading", "progress": 0.5, "hash": info_hash}
+
+    async def render_downloads_status(self, user_id=None):
+        self.calls.append(("downloads-render", {"user_id": user_id}))
+        return {
+            "message": "⬇️ Ubuntu 24.04\n🟩🟩🟩🟩🟩⬜⬜⬜⬜⬜ 50%",
+            "watch_policy": {"max_duration_seconds": 900},
+            "downloads": [],
+        }
+
+    async def render_download_status(self, info_hash, user_id=None):
+        self.calls.append(("download-status-render", {"info_hash": info_hash, "user_id": user_id}))
+        return {
+            "message": "⬇️ Ubuntu 24.04\n🟩🟩🟩🟩🟩⬜⬜⬜⬜⬜ 50%",
+            "watch_policy": {"max_duration_seconds": 900},
+            "download": {"hash": info_hash},
+        }
 
     async def health(self, *, deep=False):
         self.calls.append(("health", {"deep": deep}))
@@ -92,7 +125,10 @@ def test_cli_handle_prints_auto_download_message_by_default():
     result = _run_cli(["handle", "tt0045877"], fake_client)
 
     assert result.exit_code == 0
-    assert result.stdout == "Started auto-downloading The Hitch-Hiker (1953) in 1080p WEB-DL H.264.\n"
+    assert result.stdout == (
+        "The Hitch-Hiker (1953) is now downloading with 9 seeders. "
+        "You can ask for a status update any time.\n"
+    )
     assert fake_client.calls == [
         (
             "handle",
@@ -251,6 +287,31 @@ def test_cli_download_forwards_link_and_save_path():
             {
                 "download_link": "magnet:?xt=urn:btih:abcdef",
                 "save_path": "/media/Kids",
+                "query_id": None,
+                "user_id": None,
+            },
+        )
+    ]
+
+
+def test_cli_download_can_forward_query_id():
+    fake_client = FakeClient()
+
+    result = _run_cli(
+        ["download", "magnet:?xt=urn:btih:abcdef", "--query-id", "query-123"],
+        fake_client,
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["message"] == "Download queued"
+    assert fake_client.calls == [
+        (
+            "download",
+            {
+                "download_link": "magnet:?xt=urn:btih:abcdef",
+                "save_path": None,
+                "query_id": "query-123",
+                "user_id": None,
             },
         )
     ]
@@ -263,7 +324,37 @@ def test_cli_downloads_lists_torrents():
 
     assert result.exit_code == 0
     assert json.loads(result.stdout)[0]["name"] == "Ubuntu 24.04"
-    assert fake_client.calls == [("downloads", {})]
+    assert fake_client.calls == [("downloads", {"user_id": None})]
+
+
+def test_cli_download_status_reads_single_torrent():
+    fake_client = FakeClient()
+
+    result = _run_cli(["download-status", "abcdef1234567890"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["hash"] == "abcdef1234567890"
+    assert fake_client.calls == [("download-status", {"info_hash": "abcdef1234567890", "user_id": None})]
+
+
+def test_cli_downloads_can_filter_by_user_id():
+    fake_client = FakeClient()
+
+    result = _run_cli(["downloads", "--user-id", "telegram:123456789"], fake_client)
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)[0]["name"] == "Ubuntu 24.04"
+    assert fake_client.calls == [("downloads", {"user_id": "telegram:123456789"})]
+
+
+def test_cli_downloads_render_prints_chat_status_text():
+    fake_client = FakeClient()
+
+    result = _run_cli(["downloads", "--render", "--user-id", "telegram:123456789"], fake_client)
+
+    assert result.exit_code == 0
+    assert result.stdout == "⬇️ Ubuntu 24.04\n🟩🟩🟩🟩🟩⬜⬜⬜⬜⬜ 50%\n"
+    assert fake_client.calls == [("downloads-render", {"user_id": "telegram:123456789"})]
 
 
 def test_cli_health_supports_deep_check():
@@ -294,6 +385,18 @@ def test_cli_snapshot_reads_saved_query_snapshot():
     assert result.exit_code == 0
     assert json.loads(result.stdout)["status"] == "fallback_ready"
     assert fake_client.calls == [("snapshot", {"query_id": "query-123"})]
+
+
+def test_cli_download_status_render_prints_chat_status_text():
+    fake_client = FakeClient()
+
+    result = _run_cli(["download-status", "abcdef1234567890", "--render"], fake_client)
+
+    assert result.exit_code == 0
+    assert result.stdout == "⬇️ Ubuntu 24.04\n🟩🟩🟩🟩🟩⬜⬜⬜⬜⬜ 50%\n"
+    assert fake_client.calls == [
+        ("download-status-render", {"info_hash": "abcdef1234567890", "user_id": None})
+    ]
 
 
 def test_cli_search_requires_identifier_or_query():

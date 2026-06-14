@@ -30,6 +30,8 @@ DEFAULT_QUALITY_PREFERENCES = QualityPreferences()
 _PREMIUM_REQUEST_RE = re.compile(r"\b(4k|2160p|uhd|remux)\b", re.IGNORECASE)
 _REQUESTED_RESOLUTION_RE = re.compile(r"\b(2160\s*p|4k|uhd|1080\s*p|720\s*p|480\s*p)\b", re.IGNORECASE)
 _IMDB_ID_RE = re.compile(r"\b(tt\d{6,12})\b", re.IGNORECASE)
+_DOUBAN_SUBJECT_RE = re.compile(r"/subject/([1-9]\d*)/?", re.IGNORECASE)
+_ALLOCINE_CFILM_RE = re.compile(r"fichefilm_gen_cfilm=([1-9]\d{0,9})\.html", re.IGNORECASE)
 _TV_MARKER_RE = re.compile(
     r"\b(S\d{1,2}(?:E\d{1,3})?|Season\s+\d{1,2}|Complete\s+Season)\b",
     re.IGNORECASE,
@@ -54,6 +56,30 @@ def extract_imdb_id(user_message: str) -> str | None:
         match = _IMDB_ID_RE.search(candidate)
         if match:
             return match.group(1).lower()
+    return None
+
+
+def extract_external_movie_id(user_message: str) -> dict[str, str] | None:
+    normalized = normalize_user_message(user_message)
+
+    prefixed = _extract_prefixed_external_movie_id(normalized)
+    if prefixed is not None:
+        return prefixed
+
+    parsed = urlparse(normalized)
+    host = _hostname(parsed.netloc)
+    path = unquote(parsed.path)
+
+    if _is_douban_host(host):
+        match = _DOUBAN_SUBJECT_RE.search(path)
+        if match:
+            return {"source": "douban", "source_id": match.group(1)}
+
+    if _is_allocine_host(host):
+        match = _ALLOCINE_CFILM_RE.search(path)
+        if match:
+            return {"source": "allocine", "source_id": match.group(1)}
+
     return None
 
 
@@ -154,6 +180,29 @@ def format_quality(parsed: ParsedQuality) -> str:
         parts.append(parsed.codec)
 
     return " ".join(parts) if parts else "Unknown quality"
+
+
+def format_choice_label(parsed: ParsedQuality, *, default_resolution: str = "1080p") -> str:
+    """Compact release label for identity-certain result lists.
+
+    When every result is known to be the same film (IMDb-resolved search),
+    the title and the default resolution carry no information, so the label
+    keeps only the attributes that differ between releases: resolution when
+    it deviates from the default, source, and codec.
+    """
+    parts: list[str] = []
+    if parsed.resolution and parsed.resolution != default_resolution:
+        parts.append(parsed.resolution)
+
+    if parsed.is_remux and parsed.source in {None, "BluRay"}:
+        parts.append("REMUX")
+    elif parsed.source:
+        parts.append(parsed.source)
+
+    if parsed.codec:
+        parts.append(parsed.codec)
+
+    return " · ".join(parts) if parts else "Unknown quality"
 
 
 def calculate_score(
@@ -362,3 +411,25 @@ def _hostname(netloc: str) -> str:
 
 def _is_imdb_host(host: str) -> bool:
     return host == "imdb.com" or host.endswith(".imdb.com")
+
+
+def _is_douban_host(host: str) -> bool:
+    return host == "movie.douban.com" or host == "m.douban.com"
+
+
+def _is_allocine_host(host: str) -> bool:
+    return host == "allocine.fr" or host.endswith(".allocine.fr")
+
+
+def _extract_prefixed_external_movie_id(value: str) -> dict[str, str] | None:
+    if ":" not in value:
+        return None
+
+    prefix, raw_id = value.split(":", 1)
+    source = prefix.strip().casefold()
+    source_id = raw_id.strip()
+    if source not in {"douban", "allocine"}:
+        return None
+    if not source_id.isdigit() or source_id.startswith("0"):
+        return None
+    return {"source": source, "source_id": source_id}

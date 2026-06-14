@@ -1,18 +1,22 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.download import _download_title_from_link
 from app.main import (
     DownloadRequest,
     HandleRequest,
     SearchRequest,
     Settings,
+    _cleanup_completed_downloads_loop,
     app,
     build_prowlarr_search_params,
     normalize_download_link,
     normalize_search_results,
 )
+from app.models import TorrentStatus
 
 
 def test_settings_defaults_public_save_paths(monkeypatch):
@@ -52,6 +56,82 @@ def test_settings_accepts_custom_save_paths(monkeypatch):
     assert settings.qbitlarr_save_path_movie_4k == "/media/Movies 4K"
     assert settings.qbitlarr_save_path_tv == "/media/TV"
     assert settings.qbitlarr_extra_save_paths == ["/media/Kids", "/media/Documentaries"]
+
+
+def test_settings_retention_policy_defaults_to_disabled(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.delenv("QBITLARR_RETENTION_ENABLED", raising=False)
+    monkeypatch.delenv("QBITLARR_RETENTION_RATIO_LIMIT", raising=False)
+    monkeypatch.delenv("QBITLARR_RETENTION_SEEDING_TIME_LIMIT_MINUTES", raising=False)
+    monkeypatch.delenv("QBITLARR_RETENTION_ACTION", raising=False)
+
+    settings = Settings.from_env()
+
+    assert settings.retention_enabled is False
+    assert settings.retention_ratio_limit == 2.0
+    assert settings.retention_seeding_time_limit_minutes == 10080
+    assert settings.retention_action == "Remove"
+    assert settings.cleanup_enabled is False
+    assert settings.cleanup_completed_after_seconds == 259_200
+    assert settings.cleanup_interval_seconds == 21_600
+    assert settings.cleanup_include_legacy_requester_tags is True
+
+
+def test_settings_accepts_custom_retention_policy(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.setenv("QBITLARR_RETENTION_ENABLED", "true")
+    monkeypatch.setenv("QBITLARR_RETENTION_RATIO_LIMIT", "1.5")
+    monkeypatch.setenv("QBITLARR_RETENTION_SEEDING_TIME_LIMIT_MINUTES", "4320")
+    monkeypatch.setenv("QBITLARR_RETENTION_ACTION", "remove")
+    monkeypatch.setenv("QBITLARR_CLEANUP_ENABLED", "true")
+    monkeypatch.setenv("QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS", "172800")
+    monkeypatch.setenv("QBITLARR_CLEANUP_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS", "false")
+
+    settings = Settings.from_env()
+
+    assert settings.retention_enabled is True
+    assert settings.retention_ratio_limit == 1.5
+    assert settings.retention_seeding_time_limit_minutes == 4320
+    assert settings.retention_action == "Remove"
+    assert settings.cleanup_enabled is True
+    assert settings.cleanup_completed_after_seconds == 172800
+    assert settings.cleanup_interval_seconds == 3600
+    assert settings.cleanup_include_legacy_requester_tags is False
+
+
+def test_cleanup_loop_runs_once_before_sleeping():
+    settings = SimpleNamespace(cleanup_interval_seconds=120)
+    cleanup_calls = []
+    sleep_calls = []
+
+    async def fake_cleanup(arg):
+        cleanup_calls.append(arg)
+        return {"status": "success", "deleted_count": 0, "deleted_hashes": []}
+
+    async def fake_sleep(interval):
+        sleep_calls.append(interval)
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            _cleanup_completed_downloads_loop(
+                settings,
+                cleanup_func=fake_cleanup,
+                sleep_func=fake_sleep,
+            )
+        )
+
+    assert cleanup_calls == [settings]
+    assert sleep_calls == [120.0]
 
 
 def test_build_prowlarr_search_params_uses_query_search_by_default():
@@ -242,6 +322,15 @@ def test_download_request_accepts_optional_save_path():
     assert request.save_path == "/media/Kids"
 
 
+def test_download_request_accepts_optional_user_id():
+    request = DownloadRequest(
+        download_link="magnet:?xt=urn:btih:abcdef",
+        user_id="  telegram:123456789  ",
+    )
+
+    assert request.user_id == "telegram:123456789"
+
+
 def test_handle_request_accepts_optional_save_path():
     request = HandleRequest(user_message="tt0045877", save_path="  /media/Kids  ")
 
@@ -256,9 +345,18 @@ def test_normalize_download_link_rejects_blank_links():
 def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path):
     queued: dict[str, str | None] = {}
 
-    async def fake_add_download(download_link, settings, *, save_path=None):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         queued["download_link"] = download_link
         queued["save_path"] = save_path
+        queued["requester_id"] = requester_id
+        return TorrentStatus(
+            name="Example.Movie.2026.1080p.WEB-DL.H.264-GRP",
+            state="downloading",
+            progress=0.25,
+            size=1_000_000_000,
+            seeds=10,
+            hash="abcdef1234567890",
+        )
 
     monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
     monkeypatch.setattr(
@@ -277,18 +375,226 @@ def test_download_endpoint_passes_save_path_to_qbittorrent(monkeypatch, tmp_path
         json={
             "download_link": "magnet:?xt=urn:btih:abcdef",
             "save_path": "/media/Kids",
+            "user_id": "telegram:123456789",
         },
     )
 
     assert response.status_code == 200
+    assert response.json()["download_status"]["hash"] == "abcdef1234567890"
     assert queued == {
         "download_link": "magnet:?xt=urn:btih:abcdef",
         "save_path": "/media/Kids",
+        "requester_id": "telegram:123456789",
     }
 
 
-def test_download_endpoint_rejects_save_path_outside_allowed_roots(monkeypatch):
+def test_download_endpoint_infers_movie_save_path_when_save_path_is_omitted(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "The Hitch-Hiker 1953 1080p AMZN WEB-DL DDP2 0 H 264-GPRS"
+
     async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["download_link"] = download_link
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "http://prowlarr.test/1/download"},
+    )
+
+    assert response.status_code == 200
+    assert queued == {
+        "download_link": "http://prowlarr.test/1/download",
+        "save_path": "/downloads/movies",
+    }
+
+
+def test_download_endpoint_infers_4k_movie_save_path_when_save_path_is_omitted(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "The Hitch-Hiker 1953 2160p UHD BluRay x265"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "http://prowlarr.test/1/download"},
+    )
+
+    assert response.status_code == 200
+    assert queued["save_path"] == "/downloads/movies-4k"
+
+
+def test_download_endpoint_infers_tv_save_path_when_save_path_is_omitted(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "Example Show S01E01 1080p WEB-DL H264"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "magnet:?xt=urn:btih:abcdef"},
+    )
+
+    assert response.status_code == 200
+    assert queued["save_path"] == "/downloads/tv/Example Show"
+
+
+def test_download_endpoint_uses_query_context_to_keep_manual_selection_in_tv_path(monkeypatch, tmp_path):
+    import app.api.download as download_api
+
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "Example Show 2026 1080p WEB-DL H264"
+
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
+        queued["download_link"] = download_link
+        queued["save_path"] = save_path
+        queued["requester_id"] = requester_id
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        download_api,
+        "get_settings",
+        lambda: SimpleNamespace(
+            query_snapshot_dir=str(tmp_path),
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    from app.services.query_snapshots import QuerySnapshotStore
+
+    QuerySnapshotStore(str(tmp_path)).create(
+        query_id="query-tv-manual",
+        request={"input": "tt0017925", "query": "tt0017925"},
+        status="primary_ready",
+        reason="primary_results_ready",
+        results=[
+            {
+                "title": "Example.Show.S01.1080p.WEB-DL.H264",
+                "download_link": "magnet:?xt=urn:btih:abcdef",
+                "size": 1_000_000_000,
+                "seeders": 10,
+                "indexer": "Indexer A",
+            }
+        ],
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={
+            "download_link": "magnet:?xt=urn:btih:abcdef",
+            "query_id": "query-tv-manual",
+            "user_id": "telegram:123456789",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["imdb_id"] == "tt0017925"
+    assert payload["media_type"] == "tv"
+    assert queued == {
+        "download_link": "magnet:?xt=urn:btih:abcdef",
+        "save_path": "/downloads/tv/Example Show",
+        "requester_id": "telegram:123456789",
+    }
+
+
+def test_download_endpoint_sanitizes_inferred_tv_show_folder(monkeypatch):
+    queued: dict[str, str | None] = {}
+
+    async def fake_download_title_from_link(download_link, settings):
+        return "Example/Show S01E01 1080p WEB-DL H264"
+
+    async def fake_add_download(download_link, settings, *, save_path=None):
+        queued["save_path"] = save_path
+
+    monkeypatch.setattr("app.api.download._download_title_from_link", fake_download_title_from_link)
+    monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
+    monkeypatch.setattr(
+        "app.api.download.get_settings",
+        lambda: SimpleNamespace(
+            qbitlarr_save_path_movie="/downloads/movies",
+            qbitlarr_save_path_movie_4k="/downloads/movies-4k",
+            qbitlarr_save_path_tv="/downloads/tv",
+            qbitlarr_extra_save_paths=None,
+        ),
+    )
+
+    client = TestClient(app)
+    response = client.post(
+        "/download",
+        json={"download_link": "magnet:?xt=urn:btih:abcdef"},
+    )
+
+    assert response.status_code == 200
+    assert queued["save_path"] == "/downloads/tv/Example Show"
+
+
+def test_download_title_from_link_reads_magnet_display_name():
+    title = asyncio.run(
+        _download_title_from_link(
+            "magnet:?xt=urn:btih:abcdef&dn=Example%20Show%20S01E01%201080p",
+            SimpleNamespace(),
+        )
+    )
+
+    assert title == "Example Show S01E01 1080p"
+
+
+def test_download_endpoint_rejects_save_path_outside_allowed_roots(monkeypatch):
+    async def fake_add_download(download_link, settings, *, save_path=None, requester_id=None):
         raise AssertionError("download should not be queued")
 
     monkeypatch.setattr("app.api.download.add_download_to_qbittorrent", fake_add_download)
@@ -398,6 +704,237 @@ def test_prowlarr_indexers_endpoint_returns_discoverable_indexer_ids(monkeypatch
     ]
 
 
+def test_download_status_endpoint_returns_targeted_torrent(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_get_download_status(settings, info_hash, requester_id=None):
+        assert info_hash == "abcdef1234567890"
+        assert requester_id is None
+        return {
+            "name": "Ubuntu 24.04",
+            "state": "downloading",
+            "progress": 0.42,
+            "size": 1234567,
+            "seeds": 10,
+            "hash": "abcdef1234567890",
+        }
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "get_download_status_from_qbittorrent", fake_get_download_status)
+
+    client = TestClient(app)
+    response = client.get("/downloads/abcdef1234567890")
+
+    assert response.status_code == 200
+    assert response.json()["hash"] == "abcdef1234567890"
+
+
+def test_downloads_endpoint_passes_user_filter_to_qbittorrent(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_list_downloads(settings, requester_id=None):
+        assert requester_id == "telegram:123456789"
+        return [
+            {
+                "name": "Ubuntu 24.04",
+                "state": "downloading",
+                "progress": 0.42,
+                "size": 1234567,
+                "seeds": 10,
+                "hash": "abcdef1234567890",
+            }
+        ]
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "list_downloads_from_qbittorrent", fake_list_downloads)
+
+    client = TestClient(app)
+    response = client.get("/downloads?user_id=telegram:123456789")
+
+    assert response.status_code == 200
+    assert response.json()[0]["hash"] == "abcdef1234567890"
+
+
+def test_download_status_endpoint_passes_user_filter_to_qbittorrent(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_get_download_status(settings, info_hash, requester_id=None):
+        assert info_hash == "abcdef1234567890"
+        assert requester_id == "telegram:123456789"
+        return {
+            "name": "Ubuntu 24.04",
+            "state": "downloading",
+            "progress": 0.42,
+            "size": 1234567,
+            "seeds": 10,
+            "hash": "abcdef1234567890",
+        }
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "get_download_status_from_qbittorrent", fake_get_download_status)
+
+    client = TestClient(app)
+    response = client.get("/downloads/abcdef1234567890?user_id=telegram:123456789")
+
+    assert response.status_code == 200
+    assert response.json()["hash"] == "abcdef1234567890"
+
+
+def test_rendered_downloads_status_endpoint_returns_chat_message_and_watch_policy(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_list_downloads(settings, requester_id=None):
+        assert requester_id == "telegram:123456789"
+        return [
+            TorrentStatus(
+                name="Ubuntu 24.04",
+                state="downloading",
+                progress=0.5,
+                size=1_000_000_000,
+                seeds=10,
+                hash="abcdef1234567890",
+                download_speed=2_000_000,
+                eta=600,
+            )
+        ]
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "list_downloads_from_qbittorrent", fake_list_downloads)
+
+    client = TestClient(app)
+    response = client.get("/downloads/status-message?user_id=telegram:123456789")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["message"] == (
+        "⬇️ Ubuntu 24.04\n"
+        "🟩🟩🟩🟩🟩⬜⬜⬜⬜⬜ 50%\n"
+        "💾 500 MB / 1 GB\n"
+        "⚡ Speed: 2 MB/s\n"
+        "⏱️ ETA: 10m"
+    )
+    assert payload["watch_policy"]["max_duration_seconds"] == 900
+    assert payload["watch_policy"]["update_interval_seconds"] == 3
+    assert payload["watch_policy"]["completion_notifications_are_separate"] is True
+    assert payload["downloads"][0]["hash"] == "abcdef1234567890"
+
+
+def test_rendered_download_status_endpoint_returns_single_status_message(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_get_download_status(settings, info_hash, requester_id=None):
+        assert info_hash == "abcdef1234567890"
+        assert requester_id == "telegram:123456789"
+        return TorrentStatus(
+            name="Ubuntu 24.04",
+            state="downloading",
+            progress=0.4,
+            size=2_030_000_000,
+            seeds=10,
+            hash="abcdef1234567890",
+            download_speed=12_400_000,
+            eta=96,
+        )
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "get_download_status_from_qbittorrent", fake_get_download_status)
+
+    client = TestClient(app)
+    response = client.get("/downloads/abcdef1234567890/status-message?user_id=telegram:123456789")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["message"] == (
+        "⬇️ Ubuntu 24.04\n"
+        "🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 40%\n"
+        "💾 812 MB / 2 GB\n"
+        "⚡ Speed: 12.4 MB/s\n"
+        "⏱️ ETA: 1m 36s"
+    )
+    assert payload["download"]["hash"] == "abcdef1234567890"
+
+
+def test_pause_download_endpoint_requires_user_filter_and_returns_download(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_pause_download(settings, info_hash, requester_id):
+        assert info_hash == "abcdef1234567890"
+        assert requester_id == "telegram:123456789"
+        return TorrentStatus(
+            name="Ubuntu 24.04",
+            state="stoppedDL",
+            progress=0.4,
+            size=2_030_000_000,
+            seeds=10,
+            hash="abcdef1234567890",
+        )
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "pause_download_in_qbittorrent", fake_pause_download)
+
+    client = TestClient(app)
+    response = client.post("/downloads/abcdef1234567890/pause?user_id=telegram:123456789")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "success"
+    assert payload["action"] == "pause"
+    assert payload["download"]["state"] == "stoppedDL"
+
+
+def test_resume_download_endpoint_returns_404_when_requester_does_not_own_download(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_resume_download(settings, info_hash, requester_id):
+        assert info_hash == "abcdef1234567890"
+        assert requester_id == "telegram:99999"
+        return None
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "resume_download_in_qbittorrent", fake_resume_download)
+
+    client = TestClient(app)
+    response = client.post("/downloads/abcdef1234567890/resume?user_id=telegram:99999")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Download not found"
+
+
+def test_delete_download_endpoint_keeps_files_and_returns_deleted_download(monkeypatch):
+    import app.api.downloads_list as downloads_api
+
+    async def fake_delete_download(settings, info_hash, requester_id):
+        assert info_hash == "abcdef1234567890"
+        assert requester_id == "telegram:123456789"
+        return TorrentStatus(
+            name="Ubuntu 24.04",
+            state="stoppedDL",
+            progress=0.4,
+            size=2_030_000_000,
+            seeds=10,
+            hash="abcdef1234567890",
+        )
+
+    monkeypatch.setattr(downloads_api, "get_settings", lambda: object())
+    monkeypatch.setattr(downloads_api, "delete_download_from_qbittorrent", fake_delete_download)
+
+    client = TestClient(app)
+    response = client.post("/downloads/abcdef1234567890/delete?user_id=telegram:123456789")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "success"
+    assert payload["action"] == "delete"
+    assert payload["download"]["hash"] == "abcdef1234567890"
+
+
+def test_download_control_endpoint_requires_user_id():
+    client = TestClient(app)
+    response = client.post("/downloads/abcdef1234567890/pause")
+
+    assert response.status_code == 422
+
+
 def test_mcp_mount_exposes_same_qbitlarr_operations_as_stdio_server():
     openapi = app.openapi()
     handle_operation = openapi["paths"]["/handle"]["post"]
@@ -413,11 +950,17 @@ def test_mcp_mount_exposes_same_qbitlarr_operations_as_stdio_server():
     assert snapshot_operation["operationId"] == "qbitlarr_get_query_snapshot"
     assert qbitlarr_operations == {
         "qbitlarr_download",
+        "qbitlarr_delete_download",
+        "qbitlarr_get_download_status",
         "qbitlarr_get_query_snapshot",
         "qbitlarr_handle",
         "qbitlarr_health",
         "qbitlarr_list_downloads",
         "qbitlarr_list_prowlarr_indexers",
+        "qbitlarr_pause_download",
+        "qbitlarr_render_download_status",
+        "qbitlarr_render_downloads_status",
+        "qbitlarr_resume_download",
         "qbitlarr_search",
     }
     assert any(getattr(route, "path", "") == "/mcp" for route in app.routes)

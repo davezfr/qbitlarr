@@ -1,6 +1,6 @@
 services:
   prowlarr:
-    image: lscr.io/linuxserver/prowlarr:latest
+    image: lscr.io/linuxserver/prowlarr:2.4.0.5397-ls149
     container_name: qbitlarr-prowlarr
     restart: unless-stopped
     depends_on:
@@ -15,7 +15,7 @@ services:
       - "9696:9696"
 
   flaresolverr:
-    image: ghcr.io/flaresolverr/flaresolverr:latest
+    image: ghcr.io/flaresolverr/flaresolverr:v3.5.0
     container_name: qbitlarr-flaresolverr
     restart: unless-stopped
     environment:
@@ -51,7 +51,11 @@ services:
       QBITLARR_PREFER_SOURCE: ${QBITLARR_PREFER_SOURCE:-WEB-DL}
       QBITLARR_PREFER_CODEC: ${QBITLARR_PREFER_CODEC:-H.264}
       QBITLARR_MIN_SEEDERS: ${QBITLARR_MIN_SEEDERS:-5}
-      QBITLARR_DEFAULT_MODE: ${QBITLARR_DEFAULT_MODE:-auto}
+      QBITLARR_DEFAULT_MODE: ${QBITLARR_DEFAULT_MODE:-manual}
+      QBITLARR_CLEANUP_ENABLED: ${QBITLARR_CLEANUP_ENABLED:-false}
+      QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS: ${QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS:-259200}
+      QBITLARR_CLEANUP_INTERVAL_SECONDS: ${QBITLARR_CLEANUP_INTERVAL_SECONDS:-21600}
+      QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS: ${QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS:-true}
     volumes:
       - ./data/qbitlarr:/app/data
     ports:

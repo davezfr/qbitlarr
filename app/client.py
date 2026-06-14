@@ -51,11 +51,22 @@ class QbitlarrApiClient:
             raise QbitlarrApiError("qBitlarr API returned an unexpected search response")
         return response
 
-    async def download(self, download_link: str, save_path: str | None = None) -> dict[str, Any]:
+    async def download(
+        self,
+        download_link: str,
+        save_path: str | None = None,
+        query_id: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
         response = await self._request(
             "POST",
             "/download",
-            json={"download_link": download_link, "save_path": save_path},
+            json={
+                "download_link": download_link,
+                "save_path": save_path,
+                "query_id": query_id,
+                "user_id": user_id,
+            },
         )
         if not isinstance(response, dict):
             raise QbitlarrApiError("qBitlarr API returned an unexpected download response")
@@ -91,10 +102,59 @@ class QbitlarrApiClient:
             raise QbitlarrApiError("qBitlarr API returned an unexpected health response")
         return response
 
-    async def list_downloads(self) -> list[dict[str, Any]]:
-        response = await self._request("GET", "/downloads")
+    async def list_downloads(self, user_id: str | None = None) -> list[dict[str, Any]]:
+        kwargs: dict[str, Any] = {}
+        if user_id:
+            kwargs["params"] = {"user_id": user_id}
+        response = await self._request("GET", "/downloads", **kwargs)
         if not isinstance(response, list):
             raise QbitlarrApiError("qBitlarr API returned an unexpected downloads response")
+        return response
+
+    async def get_download_status(self, info_hash: str, user_id: str | None = None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {}
+        if user_id:
+            kwargs["params"] = {"user_id": user_id}
+        response = await self._request("GET", f"/downloads/{info_hash}", **kwargs)
+        if not isinstance(response, dict):
+            raise QbitlarrApiError("qBitlarr API returned an unexpected download status response")
+        return response
+
+    async def render_downloads_status(self, user_id: str | None = None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {}
+        if user_id:
+            kwargs["params"] = {"user_id": user_id}
+        response = await self._request("GET", "/downloads/status-message", **kwargs)
+        if not isinstance(response, dict):
+            raise QbitlarrApiError("qBitlarr API returned an unexpected rendered downloads response")
+        return response
+
+    async def render_download_status(self, info_hash: str, user_id: str | None = None) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {}
+        if user_id:
+            kwargs["params"] = {"user_id": user_id}
+        response = await self._request("GET", f"/downloads/{info_hash}/status-message", **kwargs)
+        if not isinstance(response, dict):
+            raise QbitlarrApiError("qBitlarr API returned an unexpected rendered download status response")
+        return response
+
+    async def pause_download(self, info_hash: str, user_id: str) -> dict[str, Any]:
+        return await self._control_download(info_hash, user_id=user_id, action="pause")
+
+    async def resume_download(self, info_hash: str, user_id: str) -> dict[str, Any]:
+        return await self._control_download(info_hash, user_id=user_id, action="resume")
+
+    async def delete_download(self, info_hash: str, user_id: str) -> dict[str, Any]:
+        return await self._control_download(info_hash, user_id=user_id, action="delete")
+
+    async def _control_download(self, info_hash: str, *, user_id: str, action: str) -> dict[str, Any]:
+        response = await self._request(
+            "POST",
+            f"/downloads/{info_hash}/{action}",
+            params={"user_id": user_id},
+        )
+        if not isinstance(response, dict):
+            raise QbitlarrApiError("qBitlarr API returned an unexpected download control response")
         return response
 
     async def get_query_snapshot(self, query_id: str) -> dict[str, Any]:

@@ -28,6 +28,20 @@ def normalize_optional_save_path(save_path: str | None) -> str | None:
     return path or None
 
 
+def normalize_optional_user_id(user_id: str | None) -> str | None:
+    if user_id is None:
+        return None
+    normalized = user_id.strip()
+    return normalized or None
+
+
+def normalize_optional_query_id(query_id: str | None) -> str | None:
+    if query_id is None:
+        return None
+    normalized = query_id.strip()
+    return normalized or None
+
+
 class SearchRequest(BaseModel):
     identifier: str | None = Field(default=None, description="Optional media ID")
     query: str | None = Field(default=None, description="Optional search keywords")
@@ -51,6 +65,14 @@ class SearchResult(BaseModel):
 class DownloadRequest(BaseModel):
     download_link: str
     save_path: str | None = Field(default=None, description="Optional qBittorrent save path override")
+    query_id: str | None = Field(
+        default=None,
+        description="Optional saved query ID from qbitlarr_handle for context-aware manual downloads",
+    )
+    user_id: str | None = Field(
+        default=None,
+        description="Optional requester identifier used for multi-user torrent tagging",
+    )
 
     @field_validator("download_link")
     @classmethod
@@ -62,10 +84,85 @@ class DownloadRequest(BaseModel):
     def validate_save_path(cls, value: str | None) -> str | None:
         return normalize_optional_save_path(value)
 
+    @field_validator("query_id")
+    @classmethod
+    def validate_query_id(cls, value: str | None) -> str | None:
+        return normalize_optional_query_id(value)
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_id(cls, value: str | None) -> str | None:
+        return normalize_optional_user_id(value)
+
+
+class TorrentStatus(BaseModel):
+    name: str
+    state: str
+    progress: float
+    size: int
+    seeds: int
+    hash: str
+    download_speed: int | None = None
+    eta: int | None = None
+    content_path: str | None = None
+
+
+class DynamicProgressWatchPolicy(BaseModel):
+    mode: Literal["bounded_edit_loop"] = "bounded_edit_loop"
+    max_duration_seconds: int
+    update_interval_seconds: int
+    min_progress_delta: float
+    completion_notifications_are_separate: bool
+    timeout_message: str
+
+
+class DownloadControlButton(BaseModel):
+    text: str
+    callback_data: str
+
+
+class RenderedDownloadsStatusResponse(BaseModel):
+    message: str
+    watch_policy: DynamicProgressWatchPolicy
+    downloads: list[TorrentStatus]
+
+
+class RenderedDownloadStatusResponse(BaseModel):
+    message: str
+    watch_policy: DynamicProgressWatchPolicy
+    download: TorrentStatus
+    buttons: list[DownloadControlButton] = Field(default_factory=list)
+
+
+class DownloadControlResponse(BaseModel):
+    status: Literal["success"] = "success"
+    action: Literal["pause", "resume", "delete"]
+    download: TorrentStatus
+
 
 class DownloadResponse(BaseModel):
     status: Literal["success"] = "success"
     message: str = "Download queued"
+    imdb_id: str | None = Field(default=None, description="Canonical IMDb ID when known from query context")
+    media_type: Literal["movie", "tv"] | None = Field(default=None, description="Inferred media type when known")
+    download_status: TorrentStatus | None = None
+    rendered_status: str | None = Field(
+        default=None,
+        description=(
+            "Pre-rendered chat-ready progress card for the queued torrent. Send "
+            "this string verbatim as a separate status message; do not rebuild "
+            "the bar from download_status fields. The 10-cell emoji bar updates "
+            "via qbitlarr_render_download_status."
+        ),
+    )
+    rendered_status_buttons: list[DownloadControlButton] = Field(
+        default_factory=list,
+        description=(
+            "Optional Telegram inline button specs for rendered_status. When "
+            "present, send them with the status message without modifying "
+            "callback_data."
+        ),
+    )
 
 
 HandleMode = Literal["auto", "manual", "confirm"]
@@ -96,10 +193,7 @@ class HandleRequest(BaseModel):
     @field_validator("user_id")
     @classmethod
     def validate_user_id(cls, value: str | None) -> str | None:
-        if value is None:
-            return None
-        user_id = value.strip()
-        return user_id or None
+        return normalize_optional_user_id(value)
 
     @field_validator("save_path")
     @classmethod
@@ -126,16 +220,35 @@ class ManualSearchResult(BaseModel):
     seeders: int | None = None
     size: int | None = None
     download_link: str
+    label: str | None = Field(
+        default=None,
+        description=(
+            "Chat-ready one-line display label. For IMDb-resolved searches this is a "
+            "compact differentiator (e.g. 'WEB-DL · H.265') because every result is "
+            "the same film; for keyword searches it keeps the full release title."
+        ),
+    )
 
 
 class HandleResponse(BaseModel):
     status: Literal["success", "not_found"]
     action: Literal["auto_download", "show_results", "confirm"]
     message: str
+    choices_table: str | None = Field(
+        default=None,
+        description=(
+            "Pre-rendered aligned monospace choice table for IMDb-resolved result "
+            "lists. Send verbatim inside a monospace block; do not re-format. The "
+            "recommended row is marked with a star."
+        ),
+    )
     query_id: str | None = None
     snapshot_status: str | None = None
+    imdb_id: str | None = Field(default=None, description="Canonical IMDb ID when the request resolved to one")
+    media_type: Literal["movie", "tv"] | None = Field(default=None, description="Inferred media type when known")
     title: str | None = None
     quality: str | None = None
+    download_status: TorrentStatus | None = None
     results: list[ManualSearchResult] | None = None
     alternatives: list[ManualSearchResult] | None = Field(
         default=None,
@@ -160,17 +273,6 @@ class QuerySnapshot(BaseModel):
     updated_at: str
     request: dict
     snapshots: list[QuerySnapshotEntry]
-
-
-class TorrentStatus(BaseModel):
-    name: str
-    state: str
-    progress: float
-    size: int
-    seeds: int
-    hash: str
-    download_speed: int | None = None
-    eta: int | None = None
 
 
 class ProwlarrIndexer(BaseModel):

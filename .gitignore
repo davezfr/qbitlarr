@@ -1,5 +1,6 @@
 .DS_Store
 .claude/
+.codegraph/
 .env
 .env.*
 !.env.example
@@ -16,4 +17,9 @@ venv/
 
 *.log
 data/
-docs/superpowers/plans/
+docs/superpowers/
+AGENTS.md
+DOCUMENTATION_CONVENTIONS.md
+HANDOFF.md
+PROJECT_HISTORY.md
+LOCAL_OPEN_SOURCE_RELEASE_GUARD.md

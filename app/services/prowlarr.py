@@ -11,6 +11,7 @@ from app.models import ProwlarrIndexer, SearchRequest, SearchResult
 
 
 logger = logging.getLogger("qbitlarr-api.prowlarr")
+PROWLARR_SEARCH_MAX_ATTEMPTS = 2
 
 
 async def search_prowlarr(
@@ -21,21 +22,29 @@ async def search_prowlarr(
     url = f"{settings.prowlarr_url}/api/v1/search"
     headers = {"X-Api-Key": settings.prowlarr_api_key}
 
-    try:
-        async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
-            response = await client.get(url, params=params, headers=headers)
-            response.raise_for_status()
-            payload = response.json()
-    except httpx.HTTPStatusError as exc:
-        status_code = exc.response.status_code
-        logger.warning("Prowlarr search failed with HTTP %s", status_code)
-        raise UpstreamServiceError(f"Prowlarr search failed with HTTP {status_code}") from exc
-    except httpx.RequestError as exc:
-        logger.warning("Prowlarr search request failed: %s", exc.__class__.__name__)
-        raise UpstreamServiceError("Prowlarr is unreachable") from exc
-    except ValueError as exc:
-        logger.warning("Prowlarr returned invalid JSON")
-        raise UpstreamServiceError("Prowlarr returned invalid JSON") from exc
+    for attempt in range(1, PROWLARR_SEARCH_MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
+                response = await client.get(url, params=params, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+                break
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            logger.warning("Prowlarr search failed with HTTP %s", status_code)
+            raise UpstreamServiceError(f"Prowlarr search failed with HTTP {status_code}") from exc
+        except httpx.TimeoutException as exc:
+            if attempt < PROWLARR_SEARCH_MAX_ATTEMPTS:
+                logger.warning("Prowlarr search timed out; retrying once")
+                continue
+            logger.warning("Prowlarr search request failed: %s", exc.__class__.__name__)
+            raise UpstreamServiceError("Prowlarr is unreachable") from exc
+        except httpx.RequestError as exc:
+            logger.warning("Prowlarr search request failed: %s", exc.__class__.__name__)
+            raise UpstreamServiceError("Prowlarr is unreachable") from exc
+        except ValueError as exc:
+            logger.warning("Prowlarr returned invalid JSON")
+            raise UpstreamServiceError("Prowlarr returned invalid JSON") from exc
 
     if not isinstance(payload, list):
         raise UpstreamServiceError("Prowlarr returned an unexpected response shape")

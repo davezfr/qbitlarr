@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import re
 from urllib.parse import urlparse
 
@@ -19,27 +18,32 @@ from app.domain.quality import (
     contains_premium_quality_request,
     extract_imdb_id,
     extract_requested_resolution,
+    format_choice_label,
     format_quality,
     infer_media_type,
     normalize_user_message,
     parse_quality,
 )
-from app.domain.save_paths import validate_save_path_override
+from app.domain.choice_table import render_choice_table
+from app.domain.save_paths import default_save_path_for_title, validate_save_path_override
 from app.domain.torrent_metadata import parse_torrent_name
 from app.exceptions import ConfigurationError, UpstreamServiceError
 from app.models import HandleRequest, HandleResponse, ManualSearchResult, SearchRequest, SearchResult, TorrentStatus
 from app.services.prowlarr import search_prowlarr
 from app.services.query_snapshots import QuerySnapshotStore, create_query_id
-from app.services.qbittorrent import _download_torrent_file, add_download_to_qbittorrent, list_downloads_from_qbittorrent
+from app.services.qbittorrent import (
+    _download_torrent_file,
+    add_download_to_qbittorrent,
+    list_downloads_from_qbittorrent,
+    tag_download_for_requester,
+)
+from app.services.wikidata import resolve_external_movie_id
 
 
 logger = logging.getLogger("qbitlarr-api.handle")
 router = APIRouter()
 
-MANUAL_RESULT_LIMIT = 10
-DEFAULT_MOVIE_SAVE_PATH = "/downloads/movies"
-DEFAULT_MOVIE_4K_SAVE_PATH = "/downloads/movies-4k"
-DEFAULT_TV_SAVE_PATH = "/downloads/tv"
+MANUAL_RESULT_LIMIT = 5
 MANUAL_RESULTS_MESSAGE = "Here are the top results, please reply with the number:"
 AUTO_FALLBACK_MESSAGE = "No suitable auto-download found. Here are the top results, please reply with the number:"
 DEFAULT_SEARCH_CATEGORIES = [2040, 5040]
@@ -52,6 +56,10 @@ FULL_CATEGORY_KEYWORDS = (
 )
 METADATA_VERIFICATION_LIMIT = 10
 METADATA_VERIFICATION_BATCH_SIZE = 2
+EXTERNAL_ID_UNRESOLVED_MESSAGE = (
+    "I couldn't match that link to a movie reliably. "
+    "For faster and more precise results, please send the IMDb link or IMDb ID instead."
+)
 
 
 @router.post(
@@ -60,8 +68,8 @@ METADATA_VERIFICATION_BATCH_SIZE = 2
     operation_id="qbitlarr_handle",
     summary="Search or download a movie or TV show",
     description=(
-        "Use qBitlarr to handle one movie or TV request. IMDb IDs and IMDb URLs may auto-download; "
-        "keyword searches return ranked choices."
+        "Use qBitlarr to handle one movie or TV request. IMDb IDs, URLs, and supported Douban/AlloCine "
+        "links resolve to the canonical IMDb flow; by default all input returns ranked choices."
     ),
     tags=["qbitlarr"],
 )
@@ -86,7 +94,57 @@ async def handle(request: HandleRequest, background_tasks: BackgroundTasks) -> H
                 store=store,
                 background_tasks=background_tasks,
                 save_path_override=request.save_path,
+                requester_id=request.user_id,
                 mode=mode,
+            )
+
+        external_resolution = await resolve_external_movie_id(user_message, settings)
+        if external_resolution and external_resolution.get("imdb_id"):
+            logger.info(
+                "Resolved %s source_id=%s to imdb_id=%s for user_id=%s mode=%s",
+                external_resolution.get("source"),
+                external_resolution.get("source_id"),
+                external_resolution.get("imdb_id"),
+                request.user_id or "anonymous",
+                mode,
+            )
+            return await _handle_imdb_request(
+                str(external_resolution["imdb_id"]),
+                settings,
+                user_message=user_message,
+                query_id=query_id,
+                store=store,
+                background_tasks=background_tasks,
+                save_path_override=request.save_path,
+                requester_id=request.user_id,
+                mode=mode,
+            )
+        if external_resolution:
+            logger.info(
+                "Could not resolve external movie source=%s source_id=%s for user_id=%s",
+                external_resolution.get("source"),
+                external_resolution.get("source_id"),
+                request.user_id or "anonymous",
+            )
+            unresolved_request = SearchRequest(query=user_message, categories=get_categories(user_message))
+            store.create(
+                query_id=query_id,
+                request=_snapshot_request_payload(
+                    user_message=user_message,
+                    search_request=unresolved_request,
+                    settings=settings,
+                ),
+                status="external_id_unresolved",
+                reason="external_id_unresolved",
+                results=[],
+            )
+            return HandleResponse(
+                status="success",
+                action="show_results",
+                message=EXTERNAL_ID_UNRESOLVED_MESSAGE,
+                query_id=query_id,
+                snapshot_status="external_id_unresolved",
+                results=[],
             )
 
         logger.info("Handling keyword request for user_id=%s", request.user_id or "anonymous")
@@ -170,6 +228,7 @@ async def _handle_imdb_request(
     store: QuerySnapshotStore,
     background_tasks: BackgroundTasks,
     save_path_override: str | None,
+    requester_id: str | None,
     mode: str = "auto",
 ) -> HandleResponse:
     base_request = SearchRequest(query=imdb_id, categories=get_categories(user_message))
@@ -196,6 +255,7 @@ async def _handle_imdb_request(
             requested_resolution=requested_resolution,
         )
     if existing_download:
+        await tag_download_for_requester(settings, existing_download.hash, requester_id)
         primary_ranked = _rank_results(
             primary_results,
             media_type=media_type,
@@ -223,17 +283,19 @@ async def _handle_imdb_request(
         return HandleResponse(
             status="success",
             action="auto_download",
+            imdb_id=imdb_id,
+            media_type=media_type,
             title=display_title,
             quality=quality,
             query_id=query_id,
             snapshot_status="already_in_qbittorrent",
+            download_status=existing_download,
             message=_auto_download_message(
                 display_title,
-                quality,
-                existing_download,
+                existing_download.seeds or _first_known_seeders(primary_ranked),
                 already_downloading=True,
             ),
-            alternatives=_to_manual_results(primary_ranked[:_INLINE_ALTERNATIVE_LIMIT]) or None,
+            alternatives=_to_manual_results(primary_ranked[:_INLINE_ALTERNATIVE_LIMIT], compact_labels=True) or None,
         )
 
     if _should_refine_imdb_title_search(
@@ -264,11 +326,14 @@ async def _handle_imdb_request(
         require_min_seeders=False,
         preferences=preferences,
     )
+    snapshot_status = "primary_ready" if primary_ranked else "primary_empty"
+    results_for_manual_fallback = primary_results
+    fallback_searched = False
 
     store.create(
         query_id=query_id,
         request=_snapshot_request_payload(user_message=user_message, search_request=base_request, settings=settings),
-        status="primary_ready" if primary_ranked else "primary_empty",
+        status=snapshot_status,
         reason="primary_results_ready" if primary_ranked else "primary_no_results",
         results=primary_ranked,
     )
@@ -295,6 +360,7 @@ async def _handle_imdb_request(
             query_id=query_id,
             snapshot_status="primary_ready" if primary_ranked else "not_found",
             preferences=preferences,
+            compact_labels=True,
         )
 
     if not selected:
@@ -309,6 +375,8 @@ async def _handle_imdb_request(
             requested_resolution=requested_resolution,
             require_min_seeders=False,
         )
+        fallback_searched = True
+        results_for_manual_fallback = fallback_results
         selected = await _select_best_verified_result(
             fallback_results,
             settings,
@@ -329,7 +397,7 @@ async def _handle_imdb_request(
             media_type,
         )
         return _manual_results_response(
-            fallback_results if "fallback_results" in locals() else primary_results,
+            results_for_manual_fallback,
             status="not_found",
             message=AUTO_FALLBACK_MESSAGE,
             media_type=media_type,
@@ -338,9 +406,10 @@ async def _handle_imdb_request(
             query_id=query_id,
             snapshot_status=snapshot_status,
             preferences=preferences,
+            compact_labels=True,
         )
 
-    if "snapshot_status" not in locals():
+    if not fallback_searched:
         snapshot_status = "primary_ready"
         _schedule_fallback_snapshot(
             background_tasks,
@@ -357,7 +426,7 @@ async def _handle_imdb_request(
     quality = format_quality(parse_quality(selected.title))
     display_title = clean_display_title(selected.title)
     alternatives_pool = [r for r in primary_ranked if r.download_link != selected.download_link]
-    alternatives = _to_manual_results(alternatives_pool[:_INLINE_ALTERNATIVE_LIMIT]) or None
+    alternatives = _to_manual_results(alternatives_pool[:_INLINE_ALTERNATIVE_LIMIT], compact_labels=True) or None
 
     if mode == "confirm":
         logger.info(
@@ -371,6 +440,8 @@ async def _handle_imdb_request(
         return HandleResponse(
             status="success",
             action="confirm",
+            imdb_id=imdb_id,
+            media_type=media_type,
             title=display_title,
             quality=quality,
             query_id=query_id,
@@ -379,7 +450,7 @@ async def _handle_imdb_request(
                 f"Top pick: {display_title} in {quality}. "
                 "Send the download_link to /download (or call qbitlarr_download) to queue it."
             ),
-            results=_to_manual_results([selected]),
+            results=_to_manual_results([selected], compact_labels=True),
             alternatives=alternatives,
         )
 
@@ -399,16 +470,24 @@ async def _handle_imdb_request(
         selected.indexer,
         save_path,
     )
-    download_status = await add_download_to_qbittorrent(selected.download_link, settings, save_path=save_path)
+    download_status = await add_download_to_qbittorrent(
+        selected.download_link,
+        settings,
+        save_path=save_path,
+        requester_id=requester_id,
+    )
 
     return HandleResponse(
         status="success",
         action="auto_download",
+        imdb_id=imdb_id,
+        media_type=media_type,
         title=display_title,
         quality=quality,
         query_id=query_id,
         snapshot_status=snapshot_status,
-        message=_auto_download_message(display_title, quality, download_status),
+        download_status=download_status,
+        message=_auto_download_message(display_title, selected.seeders),
         alternatives=alternatives,
     )
 
@@ -422,11 +501,7 @@ def _save_path_for_download(
 ) -> str:
     if override:
         return validate_save_path_override(override, settings)
-    if media_type == "tv":
-        return getattr(settings, "qbitlarr_save_path_tv", DEFAULT_TV_SAVE_PATH)
-    if parse_quality(title).resolution == "2160p":
-        return getattr(settings, "qbitlarr_save_path_movie_4k", DEFAULT_MOVIE_4K_SAVE_PATH)
-    return getattr(settings, "qbitlarr_save_path_movie", DEFAULT_MOVIE_SAVE_PATH)
+    return default_save_path_for_title(settings=settings, media_type=media_type, title=title)
 
 
 def _preferences(settings: Settings) -> QualityPreferences:
@@ -448,18 +523,44 @@ def _resolve_mode(request_mode: str | None, settings: Settings) -> str:
     return default if default in ("auto", "manual", "confirm") else "auto"
 
 
-def _to_manual_results(results: list[SearchResult], *, start_index: int = 1, limit: int = MANUAL_RESULT_LIMIT) -> list[ManualSearchResult]:
-    return [
-        ManualSearchResult(
-            index=index,
-            title=result.title,
-            quality=format_quality(parse_quality(result.title)),
-            seeders=result.seeders,
-            size=result.size,
-            download_link=result.download_link,
+def _to_manual_results(
+    results: list[SearchResult],
+    *,
+    start_index: int = 1,
+    limit: int = MANUAL_RESULT_LIMIT,
+    compact_labels: bool = False,
+) -> list[ManualSearchResult]:
+    pool = _dedupe_same_release(results) if compact_labels else results
+    manual_results = []
+    for index, result in enumerate(pool[:limit], start=start_index):
+        parsed = parse_quality(result.title)
+        manual_results.append(
+            ManualSearchResult(
+                index=index,
+                title=result.title,
+                quality=format_quality(parsed),
+                seeders=result.seeders,
+                size=result.size,
+                download_link=result.download_link,
+                label=format_choice_label(parsed) if compact_labels else result.title,
+            )
         )
-        for index, result in enumerate(results[:limit], start=start_index)
-    ]
+    return manual_results
+
+
+def _dedupe_same_release(results: list[SearchResult]) -> list[SearchResult]:
+    # The same release listed by multiple indexers differs only in seeders;
+    # results arrive ranked best-first, so keeping the first occurrence keeps
+    # the most-seeded copy of each (label, size) pairing.
+    seen: set[tuple[str, int | None]] = set()
+    deduped = []
+    for result in results:
+        key = (format_choice_label(parse_quality(result.title)), result.size)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(result)
+    return deduped
 
 
 _INLINE_ALTERNATIVE_LIMIT = 3
@@ -629,92 +730,28 @@ def _title_match_key(title: str) -> str:
 
 def _auto_download_message(
     display_title: str,
-    quality: str,
-    download_status: TorrentStatus | None,
+    seeders: int | None,
     *,
     already_downloading: bool = False,
 ) -> str:
-    if not download_status:
-        if already_downloading:
-            return f"Already downloading {display_title} in {quality}."
-        return f"Started auto-downloading {display_title} in {quality}..."
-
-    action = "Already downloading" if already_downloading else "Started auto-downloading"
-    return f"{action} {display_title} in {quality}. {_download_status_sentence(download_status)}"
-
-
-def _download_status_sentence(download_status: TorrentStatus) -> str:
-    progress = max(0.0, min(download_status.progress, 1.0)) * 100
-    sentence = f"qBittorrent status: {_friendly_download_state(download_status.state)}, {progress:.1f}% complete"
-
-    speed = _format_speed(download_status.download_speed)
-    if speed:
-        sentence = f"{sentence} at {speed}"
-
-    eta = _format_eta(_eta_seconds(download_status))
-    if eta:
-        return f"{sentence}; estimated finish in {eta}."
-
-    return f"{sentence}; ETA unavailable until peers connect."
+    action = "is already in the system" if already_downloading else "is now downloading"
+    if seeders is None or seeders < 0:
+        return f"{display_title} {action}. You can ask for a status update any time."
+    return (
+        f"{display_title} {action} with {seeders} {_pluralize_seeder(seeders)}. "
+        "You can ask for a status update any time."
+    )
 
 
-def _friendly_download_state(state: str) -> str:
-    return {
-        "stalledDL": "stalled",
-        "metaDL": "fetching metadata",
-        "queuedDL": "queued",
-        "pausedDL": "paused",
-        "forcedDL": "downloading",
-    }.get(state, state)
+def _first_known_seeders(results: list[SearchResult]) -> int | None:
+    for result in results:
+        if result.seeders is not None and result.seeders >= 0:
+            return result.seeders
+    return None
 
 
-def _eta_seconds(download_status: TorrentStatus) -> int | None:
-    speed = download_status.download_speed or 0
-    if speed <= 0:
-        return None
-
-    if download_status.eta is not None and 0 < download_status.eta < 365 * 24 * 60 * 60:
-        return download_status.eta
-
-    if download_status.progress >= 1:
-        return None
-
-    remaining_bytes = max(0, int(download_status.size * (1 - download_status.progress)))
-    if remaining_bytes <= 0:
-        return None
-
-    return math.ceil(remaining_bytes / speed)
-
-
-def _format_eta(seconds: int | None) -> str | None:
-    if seconds is None:
-        return None
-    if seconds < 60:
-        return "under 1 minute"
-
-    minutes = math.ceil(seconds / 60)
-    if minutes < 60:
-        return f"about {minutes} minute" + ("" if minutes == 1 else "s")
-
-    hours = math.ceil(minutes / 60)
-    if hours < 48:
-        return f"about {hours} hour" + ("" if hours == 1 else "s")
-
-    days = math.ceil(hours / 24)
-    return f"about {days} day" + ("" if days == 1 else "s")
-
-
-def _format_speed(bytes_per_second: int | None) -> str | None:
-    if not bytes_per_second or bytes_per_second <= 0:
-        return None
-
-    if bytes_per_second >= 1_000_000_000:
-        return f"{bytes_per_second / 1_000_000_000:.1f} GB/s"
-    if bytes_per_second >= 1_000_000:
-        return f"{bytes_per_second / 1_000_000:.1f} MB/s"
-    if bytes_per_second >= 1_000:
-        return f"{bytes_per_second / 1_000:.1f} KB/s"
-    return f"{bytes_per_second} B/s"
+def _pluralize_seeder(seeders: int) -> str:
+    return "seeder" if seeders == 1 else "seeders"
 
 
 def get_categories(user_message: str) -> list[int]:
@@ -735,6 +772,7 @@ def _manual_results_response(
     query_id: str | None = None,
     snapshot_status: str | None = None,
     preferences: QualityPreferences = DEFAULT_QUALITY_PREFERENCES,
+    compact_labels: bool = False,
 ) -> HandleResponse:
     ranked_results = _rank_results(
         results,
@@ -744,23 +782,15 @@ def _manual_results_response(
         require_min_seeders=False,
         preferences=preferences,
     )
+    manual_results = _to_manual_results(ranked_results, compact_labels=compact_labels)
     return HandleResponse(
         status=status,
         action="show_results",
         message=message,
+        choices_table=render_choice_table(manual_results) if compact_labels and manual_results else None,
         query_id=query_id,
         snapshot_status=snapshot_status,
-        results=[
-            ManualSearchResult(
-                index=index,
-                title=result.title,
-                quality=format_quality(parse_quality(result.title)),
-                seeders=result.seeders,
-                size=result.size,
-                download_link=result.download_link,
-            )
-            for index, result in enumerate(ranked_results[:MANUAL_RESULT_LIMIT], start=1)
-        ],
+        results=manual_results,
     )
 
 
@@ -788,7 +818,10 @@ def _rank_results(
 
         ranked.append((rank_score, result.seeders or 0, result.size or 0, result))
 
-    ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    if require_min_seeders:
+        ranked.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+    else:
+        ranked.sort(key=lambda item: (item[1], item[0], item[2]), reverse=True)
     return [item[3] for item in ranked]
 
 

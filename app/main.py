@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+from contextlib import suppress
 from hmac import compare_digest
+from typing import Awaitable, Callable
 
 from fastapi import FastAPI, Request
 from fastapi_mcp import FastApiMCP
@@ -21,27 +24,38 @@ from app.exceptions import ConfigurationError, UpstreamServiceError
 from app.models import (
     DownloadRequest,
     DownloadResponse,
+    DynamicProgressWatchPolicy,
     HandleRequest,
     HandleResponse,
     ManualSearchResult,
     ProwlarrIndexer,
     QuerySnapshot,
     QuerySnapshotEntry,
+    RenderedDownloadStatusResponse,
+    RenderedDownloadsStatusResponse,
     SearchRequest,
     SearchResult,
     TorrentStatus,
     normalize_download_link,
 )
 from app.services.prowlarr import check_prowlarr_health, list_prowlarr_indexers, search_prowlarr
-from app.services.qbittorrent import add_download_to_qbittorrent, check_qbittorrent_health, list_downloads_from_qbittorrent
+from app.services.qbittorrent import (
+    add_download_to_qbittorrent,
+    check_qbittorrent_health,
+    cleanup_completed_downloads_from_qbittorrent,
+    get_download_status_from_qbittorrent,
+    list_downloads_from_qbittorrent,
+)
 
 
 logging.basicConfig(
     level=os.getenv("LOG_LEVEL", "INFO").upper(),
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
+logger = logging.getLogger("qbitlarr-api")
 
 app = FastAPI(title="qBitlarr API")
+_cleanup_task: asyncio.Task | None = None
 
 
 @app.middleware("http")
@@ -52,6 +66,52 @@ async def require_api_key(request: Request, call_next):
         if not compare_digest(provided_api_key, expected_api_key):
             return JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
     return await call_next(request)
+
+
+@app.on_event("startup")
+async def start_cleanup_task() -> None:
+    global _cleanup_task
+    try:
+        settings = get_settings()
+    except ConfigurationError as exc:
+        logger.warning("Cleanup task not started because configuration is incomplete: %s", exc)
+        return
+
+    if not getattr(settings, "cleanup_enabled", False):
+        return
+    if _cleanup_task is None or _cleanup_task.done():
+        _cleanup_task = asyncio.create_task(_cleanup_completed_downloads_loop(settings))
+
+
+@app.on_event("shutdown")
+async def stop_cleanup_task() -> None:
+    global _cleanup_task
+    if _cleanup_task is None:
+        return
+    _cleanup_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await _cleanup_task
+    _cleanup_task = None
+
+
+async def _cleanup_completed_downloads_loop(
+    settings: Settings,
+    *,
+    cleanup_func: Callable[[Settings], Awaitable[dict]] = cleanup_completed_downloads_from_qbittorrent,
+    sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    interval = max(float(getattr(settings, "cleanup_interval_seconds", 21_600)), 60.0)
+    while True:
+        try:
+            summary = await cleanup_func(settings)
+            deleted_count = int(summary.get("deleted_count", 0))
+            if deleted_count:
+                logger.info("Cleaned up %s completed qBitlarr torrent task(s)", deleted_count)
+        except asyncio.CancelledError:
+            raise
+        except UpstreamServiceError as exc:
+            logger.warning("Completed download cleanup failed: %s", exc)
+        await sleep_func(interval)
 
 
 app.include_router(search_router)
@@ -106,10 +166,13 @@ async def health(deep: bool = False):
 QBITLARR_MCP_OPERATIONS = [
     "qbitlarr_download",
     "qbitlarr_get_query_snapshot",
+    "qbitlarr_get_download_status",
     "qbitlarr_handle",
     "qbitlarr_health",
     "qbitlarr_list_downloads",
     "qbitlarr_list_prowlarr_indexers",
+    "qbitlarr_render_download_status",
+    "qbitlarr_render_downloads_status",
     "qbitlarr_search",
 ]
 
@@ -127,12 +190,15 @@ __all__ = [
     "ConfigurationError",
     "DownloadRequest",
     "DownloadResponse",
+    "DynamicProgressWatchPolicy",
     "HandleRequest",
     "HandleResponse",
     "ManualSearchResult",
     "ProwlarrIndexer",
     "QuerySnapshot",
     "QuerySnapshotEntry",
+    "RenderedDownloadStatusResponse",
+    "RenderedDownloadsStatusResponse",
     "SearchRequest",
     "SearchResult",
     "Settings",
@@ -144,6 +210,7 @@ __all__ = [
     "calculate_score",
     "get_categories",
     "get_settings",
+    "get_download_status_from_qbittorrent",
     "health",
     "list_prowlarr_indexers",
     "list_downloads_from_qbittorrent",

@@ -108,7 +108,11 @@ Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/
 > **Agent :** Téléchargement automatique lancé : The Hitch-Hiker en 2160p UHD BluRay REMUX H.265.
 
 > **Vous :** *Qu'est-ce qui télécharge en ce moment ?*
-> **Agent :** The Hitch-Hiker — 42 % — téléchargement à 8,4 Mo/s · fin estimée dans 6 minutes
+> **Agent :** ⬇️ The Hitch-Hiker<br>
+> ████████░░░░░░░░░░░░ 42%<br>
+> 3.4 GB / 8 GB<br>
+> Speed: 8.4 MB/s<br>
+> ETA: 6m
 
 > **Vous :** *Trouve-moi The Hitch-Hiker, mais je veux choisir la release.*
 > **Agent :** Voici les meilleurs résultats, répondez avec le numéro :
@@ -116,7 +120,7 @@ Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/
 >   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
 >   3. The.Hitch-Hiker.1953.DVDRip.H.264 — 60 seeders
 
-En coulisses : quand l'agent reçoit un titre clair, il choisit automatiquement la meilleure release 1080p ayant assez de seeders et la met en file dans votre qBittorrent. Quand le titre est ambigu (recherche libre), il renvoie une liste triée et attend votre choix. Les réponses de statut viennent de `qbitlarr_list_downloads`, qui remonte en direct l'état de qBittorrent — progression, vitesse, ETA, seeders. Vous pouvez toujours dire *"4K"*, *"Remux"* ou *"720p HEVC"* pour forcer une qualité différente.
+En coulisses : quand l'agent reçoit un titre clair, il choisit automatiquement la meilleure release 1080p ayant assez de seeders et la met en file dans votre qBittorrent. Quand le titre est ambigu (recherche libre), il renvoie une liste triée et attend votre choix. Les réponses de statut peuvent venir des données brutes `qbitlarr_list_downloads` / `qbitlarr_get_download_status`, ou des messages prêts pour le chat via `qbitlarr_render_downloads_status` / `qbitlarr_render_download_status`. Les réponses rendues incluent une politique de rafraîchissement bornée : la barre de progression doit être un message de statut séparé, rafraîchi toutes les 5 secondes pendant 15 minutes maximum, puis édité en "Still downloading. Ask for status again to refresh; completion will still notify you." Les notifications de fin restent séparées et sont toujours envoyées à 100 %, et l'appelant peut ajouter une ligne de suivi, par exemple le démarrage du traitement des sous-titres, lorsqu'un workflow aval est déjà attaché. Pour l'édition directe des messages Telegram, le token est lu dans l'ordre `QBITLARR_TELEGRAM_BOT_TOKEN`, `QBITLARR_HERMES_ENV_PATH`, `HERMES_HOME/.env`, puis `~/.hermes/.env`; avec plusieurs profils/bots Hermes, pointez `QBITLARR_HERMES_ENV_PATH` vers le `.env` du profil courant. Le stdio MCP peut aussi utiliser `QBITLARR_COMPLETION_HOOK_COMMAND` pour lancer une commande locale après la fin du téléchargement ou quand le téléchargement surveillé est supprimé avant la fin : qBitlarr envoie d'abord la notification visible de fin/suppression, puis transmet un événement JSON `download_complete` ou `download_removed` sur stdin. Un échec du hook relance seulement le flux de suivi et ne bloque pas l'avis visible à l'utilisateur. Vous pouvez toujours dire *"4K"*, *"Remux"* ou *"720p HEVC"* pour forcer une qualité différente.
 
 ### Astuce : partager directement depuis l'app IMDb
 
@@ -222,7 +226,7 @@ Deux transports sont disponibles :
 - **stdio MCP** — ce que la plupart des applications agent de bureau préfèrent. Elles lancent `bin/qbitlarr-mcp` comme sous-processus.
 - **HTTP MCP** — exposé sur `http://localhost:8000/mcp` pour les hosts qui préfèrent HTTP.
 
-Outils exposés par les deux transports : `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
+Outils exposés par les deux transports : `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_download_status`, `qbitlarr_render_downloads_status`, `qbitlarr_render_download_status`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
 
 Si `QBITLARR_API_KEY` est défini, les deux transports exigent un header `X-API-Key`. Le MCP stdio lit la même variable d'environnement.
 
@@ -292,6 +296,8 @@ bin/qbitlarr handle "The Hitch-Hiker" --mode manual --json
 bin/qbitlarr search --query "The Hitch-Hiker 1953 1080p" | jq '.[0]'
 bin/qbitlarr download 'magnet:?xt=urn:btih:...'
 bin/qbitlarr downloads --watch
+bin/qbitlarr downloads --render
+bin/qbitlarr download-status abcdef1234567890 --render
 bin/qbitlarr health --deep
 bin/qbitlarr indexers
 ```
@@ -338,7 +344,31 @@ Les auto-downloads de `/handle` choisissent un chemin selon le type de média et
 - `QBITLARR_SAVE_PATH_MOVIE_4K=/downloads/movies-4k`
 - `QBITLARR_SAVE_PATH_TV=/downloads/tv`
 
+Les téléchargements de séries créent un dossier par série sous le chemin TV de base, par exemple `/downloads/tv/Example Show`.
+
 `/handle` et `/download` acceptent aussi un champ optionnel `save_path` pour les remplacements ponctuels. Ces chemins doivent se trouver sous l'une des racines configurées ci-dessus, ou sous une entrée de `QBITLARR_EXTRA_SAVE_PATHS` séparée par des virgules, par exemple `/media/Kids`.
+
+Quand `save_path` est omis, `/handle` et `/download` utilisent les chemins par défaut configurés dans qBitlarr. `/download` déduit la destination depuis les métadonnées du torrent ou le display name du magnet, afin que les sélections manuelles issues des résultats de recherche arrivent aussi dans le chemin film, film 4K ou série, plutôt que dans le dossier global par défaut de qBittorrent.
+
+## Nettoyage des tâches terminées
+
+qBitlarr peut supprimer périodiquement les tâches qBittorrent terminées qu'il gère, tout en conservant les fichiers téléchargés. Les nouveaux téléchargements qBitlarr reçoivent le tag `qbitlarr.managed` ; les anciens tags `requester.*` peuvent aussi être inclus par compatibilité.
+
+Désactivé par défaut. Activez et ajustez avec ces variables :
+
+```sh
+QBITLARR_CLEANUP_ENABLED=false
+QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200
+QBITLARR_CLEANUP_INTERVAL_SECONDS=21600
+QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS=true
+```
+
+Notes :
+
+- `QBITLARR_CLEANUP_COMPLETED_AFTER_SECONDS=259200` nettoie les tâches terminées depuis au moins 3 jours.
+- `QBITLARR_CLEANUP_INTERVAL_SECONDS=21600` vérifie toutes les 6 heures.
+- Le nettoyage appelle qBittorrent avec `delete_files=false`, donc il supprime seulement la tâche, pas les fichiers média.
+- Les torrents non gérés, sans tag `qbitlarr.managed` ni ancien tag `requester.*`, sont ignorés.
 
 ## API REST
 
@@ -350,6 +380,9 @@ Les auto-downloads de `/handle` choisissent un chemin selon le type de média et
 | POST | `/search` | Recherche Prowlarr brute |
 | POST | `/download` | Ajouter un lien de téléchargement connu |
 | GET | `/downloads` | Lister les torrents dans qBittorrent |
+| GET | `/downloads/status-message` | Rendre les téléchargements comme message de progression pour le chat |
+| GET | `/downloads/{info_hash}` | Lire un torrent par info hash |
+| GET | `/downloads/{info_hash}/status-message` | Rendre un torrent comme message de progression pour le chat |
 | GET | `/queries/{query_id}` | Relire un snapshot de recherche sauvegardé |
 | GET | `/prowlarr/indexers` | Lister les indexeurs Prowlarr avec leurs IDs |
 
@@ -412,6 +445,16 @@ qbitlarr/
 - **`app/domain/quality.py`** est la couche pure de scoring/classement, sans appels réseau. Modifiez ce fichier si vous voulez changer la façon dont les releases sont choisies.
 - **`app/client.py`** est le seul client HTTP. La CLI (`app/cli.py`) et le MCP stdio (`mcp_server/server.py`) l'utilisent tous les deux, ce qui garde un comportement cohérent entre les interfaces.
 - **L'API REST est la surface canonique.** MCP et CLI sont tous les deux des clients de cette API. Si vous intégrez qBitlarr dans un autre système, appelez directement les endpoints REST.
+
+## Projets tiers
+
+qBitlarr s'intègre avec ces projets tiers :
+
+- **[Prowlarr](https://github.com/Prowlarr/Prowlarr)** — GPL-3.0. qBitlarr peut lancer Prowlarr comme service Docker Compose séparé et communique avec lui via son API HTTP.
+- **[qBittorrent](https://github.com/qbittorrent/qBittorrent)** — GPL-2.0. qBitlarr attend que vous fournissiez qBittorrent séparément et communique avec lui via son API Web UI.
+- **[FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)** — MIT. La configuration Docker Compose de qBitlarr l'inclut comme proxy de challenge optionnel pour les indexeurs Prowlarr qui en ont besoin.
+
+qBitlarr n'est pas affilié à Prowlarr, qBittorrent, FlareSolverr ou leurs mainteneurs, et n'est ni approuvé ni sponsorisé par eux.
 
 ## License
 
