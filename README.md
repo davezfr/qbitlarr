@@ -89,16 +89,14 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
   <tr>
     <td width="50%">
       <img src="docs/screenshots/telegram-imdb-share.jpg" alt="Telegram example: sharing the IMDb page for The Hitch-Hiker to an agent, which starts the download through qBitlarr.">
-      <br>
-      <em>Screenshot example for reference only. The base title shown is a Public Domain example; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.</em>
     </td>
     <td width="50%">
       <img src="docs/screenshots/telegram-public-domain-selection.jpg" alt="Telegram example: choosing and checking the status of a Night of the Living Dead 1968 download.">
-      <br>
-      <em>Screenshot example for reference only. The base title shown is a Public Domain example; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.</em>
     </td>
   </tr>
 </table>
+
+*Screenshots for reference only. The titles shown are Public Domain examples; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.*
 
 > **You:** *Download The Hitch-Hiker.*
 > **Agent:** A couple of titles match — which one?
@@ -263,7 +261,13 @@ Two transports are available:
 
 Tools exposed by both: `qbitlarr_handle`, `qbitlarr_search`, `qbitlarr_download`, `qbitlarr_list_downloads`, `qbitlarr_get_download_status`, `qbitlarr_render_downloads_status`, `qbitlarr_render_download_status`, `qbitlarr_pause_download`, `qbitlarr_resume_download`, `qbitlarr_delete_download`, `qbitlarr_watch_download`, `qbitlarr_get_query_snapshot`, `qbitlarr_list_prowlarr_indexers`, `qbitlarr_health`.
 
-The stdio MCP wrapper also supports one-time completion notifications for Hermes-style messaging targets. Pass `notification_target` when queueing a torrent, such as `telegram:123456789`, and qBitlarr will watch that torrent hash, send one separate progress status message, refresh it on the watch interval, and send that same target a short message when the download reaches 100%. If `user_id` / `requester_id` is already a Hermes target like `telegram:<current user id>`, qBitlarr reuses it automatically for completion notifications, so multi-user bots usually do not need to pass `notification_target` separately. The same per-user `user_id` / `requester_id` also scopes follow-up status checks to that user's tagged torrents. For manual flows, agents can also call `qbitlarr_watch_download` with a known torrent hash. When a downstream workflow is already attached, pass `completion_followup_message` so the completion notice can also say what starts next, for example subtitle processing. Direct Telegram progress editing uses `QBITLARR_TELEGRAM_BOT_TOKEN`, `QBITLARR_HERMES_ENV_PATH`, `HERMES_HOME/.env`, then `~/.hermes/.env` in that order, so named Hermes profiles should point `QBITLARR_HERMES_ENV_PATH` at the profile `.env` if multiple bots are configured. Set `QBITLARR_COMPLETION_HOOK_COMMAND` to run an optional local command after a watched download reaches 100% or is removed before completion; qBitlarr sends the user-facing completion/removal message first, then writes a `download_complete` or `download_removed` event JSON document to that command's stdin. Hook failures are retried without suppressing the visible user notice.
+The stdio MCP wrapper also sends **one-time completion notifications** to Hermes-style targets:
+
+- Pass `notification_target` (e.g. `telegram:123456789`) when queueing a torrent. qBitlarr watches the hash, posts one progress message, refreshes it on the watch interval, and messages that target at 100%. If `user_id` / `requester_id` is already a Hermes target, it is reused automatically — multi-user bots rarely need `notification_target` separately.
+- The same per-user `user_id` / `requester_id` scopes status checks to that user's tagged torrents.
+- For manual flows, call `qbitlarr_watch_download` with a known hash; pass `completion_followup_message` to append a "what starts next" line (e.g. subtitle processing).
+- Telegram progress editing reads `QBITLARR_TELEGRAM_BOT_TOKEN`, then `QBITLARR_HERMES_ENV_PATH`, `HERMES_HOME/.env`, `~/.hermes/.env` — point `QBITLARR_HERMES_ENV_PATH` at a profile `.env` when running multiple bots.
+- `QBITLARR_COMPLETION_HOOK_COMMAND` runs a local command after a watched download completes or is removed; qBitlarr sends the user message first, then writes a `download_complete` / `download_removed` JSON event to the command's stdin. Hook failures are retried without hiding the user notice.
 
 If `QBITLARR_API_KEY` is set, both transports require an `X-API-Key` header. The stdio MCP picks it up from the same env var.
 
@@ -422,88 +426,22 @@ curl -X POST http://localhost:8000/download \
 
 ```
 qbitlarr/
-├── app/                          FastAPI service — the canonical implementation
-│   ├── main.py                   App entry point, mounts routers + HTTP MCP at /mcp
-│   ├── config.py                 Env-var settings (Prowlarr, qBittorrent, preferences)
-│   ├── models.py                 Pydantic request/response schemas
-│   ├── exceptions.py
-│   ├── client.py                 Async HTTP client (shared by CLI and MCP)
-│   ├── cli.py                    `qbitlarr` argparse CLI
-│   ├── api/                      REST endpoint handlers
-│   │   ├── handle.py             /handle — the main orchestration: search → rank → queue
-│   │   ├── search.py             /search — raw Prowlarr passthrough
-│   │   ├── download.py           /download — queue a known link
-│   │   ├── downloads_list.py     /downloads — qBittorrent status
-│   │   ├── query_snapshots.py    /queries/{id} — saved search snapshots
-│   │   └── prowlarr.py           /prowlarr/indexers — indexer discovery
-│   ├── domain/                   Pure logic, no I/O
-│   │   ├── choice_table.py       Monospace candidate tables for agents/chats
-│   │   ├── download_progress.py  Emoji status cards, watch policy, control buttons
-│   │   ├── quality.py            Title parsing, scoring, QualityPreferences
-│   │   ├── save_paths.py         Media-type-aware qBittorrent save path selection
-│   │   ├── search_results.py     Prowlarr result normalization
-│   │   └── torrent_metadata.py   .torrent file decoding for verification
-│   └── services/                 External-service clients
-│       ├── prowlarr.py
-│       ├── qbittorrent.py
-│       ├── query_snapshots.py
-│       └── wikidata.py
-├── mcp_server/
-│   ├── notifications.py          Completion watcher, Telegram status edits, hook runner
-│   └── server.py                 stdio MCP server — thin wrappers around app/client.py
-├── bin/
-│   ├── qbitlarr                  Launcher for the CLI
-│   └── qbitlarr-mcp              Launcher for the stdio MCP server
-├── tests/                        pytest suite
-├── docs/
-│   ├── architecture.png
-│   ├── architecture.svg
-│   └── screenshots/              README screenshots
-├── docker-compose.yml            Bundles qbitlarr + prowlarr + flaresolverr
-├── Dockerfile                    Builds the qbitlarr image
-├── requirements.txt
-├── .env.example                  Copy to .env and fill in
-├── README.md                     English README
-├── README.zh-CN.md               Simplified Chinese README
-└── README.fr.md                  French README
+├── app/            FastAPI service — REST API, CLI, and the canonical logic
+│   ├── api/        REST endpoint handlers (handle, search, download, ...)
+│   ├── domain/     Pure logic: ranking, save paths, choice tables, progress cards
+│   └── services/   External clients: prowlarr, qbittorrent, wikidata
+├── mcp_server/     stdio MCP server (thin wrappers around app/client.py)
+├── bin/            `qbitlarr` and `qbitlarr-mcp` launchers
+├── tests/          pytest suite
+├── docs/           architecture diagram + README screenshots
+└── docker-compose.yml, Dockerfile, .env.example, README*.md
 ```
 
-**Where things live:**
+The REST API is the canonical surface; the CLI and stdio MCP are thin clients of `app/client.py`. Most logic lives in `app/api/handle.py` (orchestration: identify → rank → queue) and `app/domain/quality.py` (pure ranking, no network).
 
-- **`app/api/handle.py`** is where the interesting logic happens — IMDb detection, primary/fallback indexer cascade, ranking, mode handling (`auto`/`manual`/`confirm`).
-- **`app/domain/quality.py`** is the pure scoring/ranking layer — no network calls. Tune this if you want to change *how* releases are picked.
-- **`app/domain/download_progress.py`** renders the emoji progress cards and declares the bounded dynamic-refresh policy used by chat adapters.
-- **`app/client.py`** is the only HTTP client. Both the CLI (`app/cli.py`) and the stdio MCP (`mcp_server/server.py`) call into it, so behavior stays consistent across interfaces.
-- **The REST API is the canonical surface.** MCP and CLI are both clients of it. If you're embedding qBitlarr in another system, hit the REST endpoints directly.
+## Pair With Babelarr For Subtitles
 
-## Demo: Pair With Babelarr For Subtitles
-
-qBitlarr handles media acquisition. If you also want subtitles prepared after a
-download finishes, pair it with [Babelarr](https://github.com/davezfr/babelarr).
-Babelarr can translate existing source subtitles, extract embedded text
-subtitles, or search online subtitle providers when no local source subtitle is
-available.
-
-When both MCP servers are available to the same agent, the user-facing workflow
-can stay simple:
-
-```text
-User:
-  Download The Hitch-Hiker and make Chinese-English subtitles.
-
-Agent:
-  1. Call qbitlarr_handle to search and queue the movie.
-  2. Watch qBitlarr status until the torrent has a completed local path.
-  3. Hand that path to Babelarr with a direct video subtitle job.
-  4. Let Babelarr find or download a source subtitle, translate it, and write
-     the final SRT or bilingual ASS sidecar.
-  5. Report that the video is downloaded and the subtitle sidecar is ready.
-```
-
-For a direct setup, the agent can call qBitlarr first and then call Babelarr
-with the completed video path. For a more durable queue, expose Babelarr's
-Runtime MCP server as well; it can remember the qBitlarr download, attach the
-subtitle request, and dispatch Babelarr when the local media path is ready.
+qBitlarr handles acquisition; pair it with [Babelarr](https://github.com/davezfr/babelarr) to prepare subtitles after a download finishes. When both MCP servers are available to one agent, *"Download The Hitch-Hiker and add Chinese-English subtitles"* becomes: qBitlarr queues the movie, and once it has a local path Babelarr finds or downloads a source subtitle, translates it, and writes the SRT/ASS sidecar. For a durable queue, also expose Babelarr's Runtime MCP server — it remembers the download and dispatches Babelarr when the path is ready.
 
 ## Third-Party Projects
 
