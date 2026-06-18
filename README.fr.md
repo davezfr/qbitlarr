@@ -87,11 +87,11 @@ Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/
 
 <table>
   <tr>
-    <td width="50%">
-      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" alt="Exemple Telegram : partager la page IMDb de The Hitch-Hiker, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
+    <td width="44%" align="center" valign="middle">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="420" alt="Exemple Telegram : partager la page IMDb de The Hitch-Hiker, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
     </td>
-    <td width="50%">
-      <img src="docs/screenshots/telegram-title-release-picker.jpg" alt="Exemple Telegram : rechercher par titre, choisir le bon film, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
+    <td width="56%" align="center" valign="middle">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="440" alt="Exemple Telegram : rechercher par titre, choisir le bon film, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
     </td>
   </tr>
 </table>

@@ -87,11 +87,11 @@ curl 'http://localhost:8000/health?deep=true'
 
 <table>
   <tr>
-    <td width="50%">
-      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" alt="Telegram 示例：分享 The Hitch-Hiker 的 IMDb 页面，选择发布版本，并查看 qBitlarr 下载进度。">
+    <td width="44%" align="center" valign="middle">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="420" alt="Telegram 示例：分享 The Hitch-Hiker 的 IMDb 页面，选择发布版本，并查看 qBitlarr 下载进度。">
     </td>
-    <td width="50%">
-      <img src="docs/screenshots/telegram-title-release-picker.jpg" alt="Telegram 示例：通过标题搜索，选择正确电影，选择发布版本，并查看 qBitlarr 下载进度。">
+    <td width="56%" align="center" valign="middle">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="440" alt="Telegram 示例：通过标题搜索，选择正确电影，选择发布版本，并查看 qBitlarr 下载进度。">
     </td>
   </tr>
 </table>
