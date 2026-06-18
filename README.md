@@ -96,34 +96,35 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
   </tr>
 </table>
 
-*Screenshots for reference only. Left: an IMDb link or ID goes directly to release choices and download progress. Right: a title request first asks which title you mean, then shows release choices and progress. The demo title is a Public Domain example; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.*
+*Screenshots for reference only. Left: an IMDb link or ID goes directly to release choices and download progress. Right: the title search `The Hitchhiker 1953` returns four title choices first; selecting The Hitch-Hiker (1953) opens the same release picker and progress view. The demo title is a Public Domain example; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.*
 
-> **You:** *Download The Hitch-Hiker.*
-> **Agent:** A couple of titles match — which one?
->   1. The Hitch-Hiker (1953)
->   2. The Hitchhiker's Guide to the Galaxy (2005)
+> **You:** *Download The Hitchhiker 1953.*
+> **Agent:** Which title do you mean?
+>   1. The Hitchhiker's Guide to the Galaxy (2005)
+>   2. The Hitch-Hiker (1953)
+>   3. An American Hippie in Israel (1972)
+>   4. The Hitch Hiker (2004)
 
-> **You:** *The first one.*
-> **Agent:** Here are the top releases — reply with the number:
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+> **You:** *Tap The Hitch-Hiker (1953).*
+> **Agent:** Choose the version to download:
+>   1. WEB-DL · H.264 · 5.3 GB
+>   2. 1.2 GB option
+>   3. WEB-DL · H.264 · 5.3 GB
+>   4. BluRay · H.264 · 5 GB
+>   5. BluRay · H.264 · 8.7 GB
 
-> **You:** *Download tt0045877* — an IMDb ID or link skips straight to the releases.
-> **Agent:** Here are the top releases — reply with the number:
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+> **You:** *Tap the 1.2 GB release.*
+> **Agent:** Got it, I'll add the download.
+> **Agent:** ⬇️ The Hitch-Hiker (1953) [1080p]<br>
+> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 36%<br>
+> 💾 421.9 MB / 1.1 GB<br>
+> ⚡ Speed: 558.4 KB/s<br>
+> ⏱️ ETA: 5m 24s
 
-> **You:** *Number 1 — and I want 4K.*
-> **Agent:** The Hitch-Hiker (2160p) is now downloading with 50 seeders. You can ask for a status update any time.
+> **You:** *Download tt0045877*
+> **Agent:** Because the IMDb ID already identifies the film, qBitlarr skips the title picker and opens the release buttons directly.
 
-> **You:** *What's downloading right now?*
-> **Agent:** ⬇️ The Hitch-Hiker<br>
-> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 42%<br>
-> 💾 3.4 GB / 8 GB<br>
-> ⚡ Speed: 8.4 MB/s<br>
-> ⏱️ ETA: 6m
-
-Behind the scenes, every request resolves to one title first: an IMDb / Douban / AlloCine link or ID locks the title directly, while a plain keyword is matched against Wikidata — and if several titles match, the agent asks which one you mean before showing releases. If nothing matches, qBitlarr asks for an IMDb link rather than guessing. Once the title is fixed it ranks releases and returns the top few to pick from; in `auto` mode it queues the best one outright. Say *"4K"*, *"Remux"*, or *"720p HEVC"* any time to override the default quality. Status comes back as raw data (`qbitlarr_list_downloads` / `qbitlarr_get_download_status`) or as chat-ready emoji progress cards (`qbitlarr_render_*`); see [Connect To An Agent](#connect-to-an-agent) for the refresh and completion-notification details.
+Behind the scenes, every request resolves to one title first: an IMDb / Douban / AlloCine link or ID locks the title directly, while a plain keyword is matched against Wikidata. If several titles match, qBitlarr returns title choices that chat adapters can render as buttons; selecting one continues to the release picker. If nothing matches, qBitlarr asks for an IMDb link rather than guessing. Once the title is fixed it ranks releases and returns the top few choices as structured buttons and tables; in `auto` mode it queues the best one outright. Say *"4K"*, *"Remux"*, or *"720p HEVC"* any time to override the default quality. Status comes back as raw data (`qbitlarr_list_downloads` / `qbitlarr_get_download_status`) or as chat-ready emoji progress cards (`qbitlarr_render_*`); see [Connect To An Agent](#connect-to-an-agent) for the refresh and completion-notification details.
 
 ### Pro tip: share straight from the movie app or website
 

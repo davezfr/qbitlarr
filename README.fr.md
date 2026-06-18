@@ -96,34 +96,35 @@ Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/
   </tr>
 </table>
 
-*Captures d'écran fournies à titre d'exemple uniquement. À gauche, un lien ou ID IMDb mène directement au choix de release et au suivi du téléchargement. À droite, une demande par titre confirme d'abord le film exact, puis affiche les choix de release et la progression. Le titre de démonstration est un exemple Public Domain ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.*
+*Captures d'écran fournies à titre d'exemple uniquement. À gauche, un lien ou ID IMDb mène directement au choix de release et au suivi du téléchargement. À droite, la recherche `The Hitchhiker 1953` affiche d'abord quatre choix de titre ; sélectionner The Hitch-Hiker (1953) ouvre le même sélecteur de releases et la même vue de progression. Le titre de démonstration est un exemple Public Domain ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.*
 
-> **Vous :** *Télécharge The Hitch-Hiker.*
-> **Agent :** Quelques titres correspondent — lequel voulez-vous ?
->   1. The Hitch-Hiker (1953)
->   2. The Hitchhiker's Guide to the Galaxy (2005)
+> **Vous :** *Télécharge The Hitchhiker 1953.*
+> **Agent :** Quel titre voulez-vous ?
+>   1. The Hitchhiker's Guide to the Galaxy (2005)
+>   2. The Hitch-Hiker (1953)
+>   3. An American Hippie in Israel (1972)
+>   4. The Hitch Hiker (2004)
 
-> **Vous :** *Le premier.*
-> **Agent :** Voici les meilleures releases, répondez avec le numéro :
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+> **Vous :** *Touchez The Hitch-Hiker (1953).*
+> **Agent :** Choisissez la version à télécharger :
+>   1. WEB-DL · H.264 · 5.3 GB
+>   2. Option 1.2 GB
+>   3. WEB-DL · H.264 · 5.3 GB
+>   4. BluRay · H.264 · 5 GB
+>   5. BluRay · H.264 · 8.7 GB
 
-> **Vous :** *Télécharge tt0045877* — un ID ou lien IMDb va directement aux releases.
-> **Agent :** Voici les meilleures releases, répondez avec le numéro :
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+> **Vous :** *Touchez la release de 1.2 GB.*
+> **Agent :** C'est bon, je lance le téléchargement.
+> **Agent :** ⬇️ The Hitch-Hiker (1953) [1080p]<br>
+> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 36%<br>
+> 💾 421.9 MB / 1.1 GB<br>
+> ⚡ Speed: 558.4 KB/s<br>
+> ⏱️ ETA: 5m 24s
 
-> **Vous :** *Numéro 1 — et je veux la 4K.*
-> **Agent :** The Hitch-Hiker (2160p) est en téléchargement avec 50 seeders. Vous pouvez demander le statut à tout moment.
+> **Vous :** *Télécharge tt0045877*
+> **Agent :** Comme l'ID IMDb identifie déjà le film, qBitlarr saute le choix du titre et ouvre directement les boutons de release.
 
-> **Vous :** *Qu'est-ce qui télécharge en ce moment ?*
-> **Agent :** ⬇️ The Hitch-Hiker<br>
-> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 42%<br>
-> 💾 3.4 GB / 8 GB<br>
-> ⚡ Speed: 8.4 MB/s<br>
-> ⏱️ ETA: 6m
-
-En coulisses, chaque demande est d'abord résolue vers un titre précis : un lien ou ID IMDb / Douban / AlloCine verrouille le titre directement, tandis qu'un mot-clé est comparé via Wikidata. Si plusieurs titres correspondent, l'agent demande lequel vous voulez avant d'afficher les releases. Si rien ne correspond, qBitlarr demande un lien IMDb plutôt que de deviner. Une fois le titre fixé, il classe les releases et renvoie les meilleures options ; en mode `auto`, il ajoute directement la meilleure. Vous pouvez toujours dire *"4K"*, *"Remux"* ou *"720p HEVC"* pour remplacer les préférences par défaut. Le statut peut revenir sous forme de données brutes (`qbitlarr_list_downloads` / `qbitlarr_get_download_status`) ou de cartes de progression emoji prêtes pour le chat (`qbitlarr_render_*`) ; voir [Connecter un agent](#connecter-un-agent) pour les détails de rafraîchissement et de notifications de fin.
+En coulisses, chaque demande est d'abord résolue vers un titre précis : un lien ou ID IMDb / Douban / AlloCine verrouille le titre directement, tandis qu'un mot-clé est comparé via Wikidata. Si plusieurs titres correspondent, qBitlarr renvoie des choix de titre que les adaptateurs de chat peuvent afficher comme boutons ; en sélectionner un continue vers le sélecteur de releases. Si rien ne correspond, qBitlarr demande un lien IMDb plutôt que de deviner. Une fois le titre fixé, il classe les releases et renvoie les meilleures options sous forme de boutons et tableaux structurés ; en mode `auto`, il ajoute directement la meilleure. Vous pouvez toujours dire *"4K"*, *"Remux"* ou *"720p HEVC"* pour remplacer les préférences par défaut. Le statut peut revenir sous forme de données brutes (`qbitlarr_list_downloads` / `qbitlarr_get_download_status`) ou de cartes de progression emoji prêtes pour le chat (`qbitlarr_render_*`) ; voir [Connecter un agent](#connecter-un-agent) pour les détails de rafraîchissement et de notifications de fin.
 
 ### Astuce : partager directement depuis l'app IMDb
 

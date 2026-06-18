@@ -96,34 +96,35 @@ curl 'http://localhost:8000/health?deep=true'
   </tr>
 </table>
 
-*截图示例仅供参考。左图展示 IMDb 链接或 ID 直接进入发布版本选择和下载进度；右图展示标题请求先确认具体影片，再进入发布版本选择和下载进度。Demo 标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐、字幕或版本而不同。*
+*截图示例仅供参考。左图展示 IMDb 链接或 ID 直接进入发布版本选择和下载进度；右图展示搜索 `The Hitchhiker 1953` 后先出现 4 个标题选项，点选 The Hitch-Hiker (1953) 后进入同一套发布版本选择和进度视图。Demo 标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐、字幕或版本而不同。*
 
-> **你：** *帮我下载 The Hitch-Hiker。*
-> **Agent：** 有几个标题可能匹配，你想要哪一个？
->   1. The Hitch-Hiker (1953)
->   2. The Hitchhiker's Guide to the Galaxy (2005)
+> **你：** *帮我下载 The Hitchhiker 1953。*
+> **Agent：** 你指的是哪一个标题？
+>   1. The Hitchhiker's Guide to the Galaxy (2005)
+>   2. The Hitch-Hiker (1953)
+>   3. An American Hippie in Israel (1972)
+>   4. The Hitch Hiker (2004)
 
-> **你：** *第一个。*
-> **Agent：** 这里是排名靠前的发布版本，回复编号即可：
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+> **你：** *点选 The Hitch-Hiker (1953)。*
+> **Agent：** 请选择要下载的版本：
+>   1. WEB-DL · H.264 · 5.3 GB
+>   2. 1.2 GB 选项
+>   3. WEB-DL · H.264 · 5.3 GB
+>   4. BluRay · H.264 · 5 GB
+>   5. BluRay · H.264 · 8.7 GB
 
-> **你：** *下载 tt0045877* — IMDb ID 或链接会直接进入发布版本选择。
-> **Agent：** 这里是排名靠前的发布版本，回复编号即可：
->   1. The.Hitch-Hiker.1953.1080p.WEB-DL.H.264 — 152 seeders
->   2. The.Hitch-Hiker.1953.720p.BluRay.H.264 — 84 seeders
+> **你：** *点选 1.2 GB 的版本。*
+> **Agent：** 好的，我会加入下载。
+> **Agent：** ⬇️ The Hitch-Hiker (1953) [1080p]<br>
+> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 36%<br>
+> 💾 421.9 MB / 1.1 GB<br>
+> ⚡ Speed: 558.4 KB/s<br>
+> ⏱️ ETA: 5m 24s
 
-> **你：** *选 1，而且我要 4K。*
-> **Agent：** The Hitch-Hiker (2160p) 已开始下载，当前有 50 个 seeders。你可以随时询问下载状态。
+> **你：** *下载 tt0045877*
+> **Agent：** 因为 IMDb ID 已经锁定了影片，qBitlarr 会跳过标题选择，直接打开发布版本按钮。
 
-> **你：** *现在在下载什么？*
-> **Agent：** ⬇️ The Hitch-Hiker<br>
-> 🟩🟩🟩🟩⬜⬜⬜⬜⬜⬜ 42%<br>
-> 💾 3.4 GB / 8 GB<br>
-> ⚡ Speed: 8.4 MB/s<br>
-> ⏱️ ETA: 6m
-
-幕后逻辑：每个请求都会先解析到一个具体标题。IMDb / Douban / AlloCine 链接或 ID 会直接锁定标题；普通关键词会先通过 Wikidata 匹配，如果命中多个标题，Agent 会先问你指的是哪一个，再展示发布版本。如果没有匹配，qBitlarr 会要求 IMDb 链接，而不是猜测。标题确定后，它会排序发布版本并返回前几个候选；在 `auto` 模式下则会直接加入最佳版本。你可以随时说 *"4K"*、*"Remux"* 或 *"720p HEVC"* 来覆盖默认质量偏好。状态可以返回原始数据（`qbitlarr_list_downloads` / `qbitlarr_get_download_status`），也可以返回适合聊天窗口的 emoji 进度卡片（`qbitlarr_render_*`）；刷新和完成通知细节见 [接入 Agent](#接入-agent)。
+幕后逻辑：每个请求都会先解析到一个具体标题。IMDb / Douban / AlloCine 链接或 ID 会直接锁定标题；普通关键词会先通过 Wikidata 匹配。如果命中多个标题，qBitlarr 会返回标题选项，聊天适配器可以把它们渲染成按钮；点选其中一个后继续进入发布版本选择。如果没有匹配，qBitlarr 会要求 IMDb 链接，而不是猜测。标题确定后，它会排序发布版本，并以结构化按钮和表格返回前几个候选；在 `auto` 模式下则会直接加入最佳版本。你可以随时说 *"4K"*、*"Remux"* 或 *"720p HEVC"* 来覆盖默认质量偏好。状态可以返回原始数据（`qbitlarr_list_downloads` / `qbitlarr_get_download_status`），也可以返回适合聊天窗口的 emoji 进度卡片（`qbitlarr_render_*`）；刷新和完成通知细节见 [接入 Agent](#接入-agent)。
 
 ### Pro tip：直接从 IMDb 应用分享
 
