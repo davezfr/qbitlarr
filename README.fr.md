@@ -88,15 +88,15 @@ Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/
 <table>
   <tr>
     <td width="44%" align="center" valign="middle">
-      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="420" alt="Exemple Telegram : partager la page IMDb de The Hitch-Hiker, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="430" alt="Exemple Telegram : partager la page IMDb de The Hitch-Hiker, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
     </td>
     <td width="56%" align="center" valign="middle">
-      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="440" alt="Exemple Telegram : rechercher par titre, choisir le bon film, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="430" alt="Exemple Telegram : rechercher par titre, choisir le bon film, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
     </td>
   </tr>
 </table>
 
-*Captures d'écran fournies à titre d'exemple uniquement. Les titres affichés sont des exemples du domaine public ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.*
+*Captures d'écran fournies à titre d'exemple uniquement. À gauche, un lien ou ID IMDb mène directement au choix de release et au suivi du téléchargement. À droite, une demande par titre confirme d'abord le film exact, puis affiche les choix de release et la progression. Le titre de démonstration est un exemple Public Domain ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.*
 
 > **Vous :** *Télécharge The Hitch-Hiker.*
 > **Agent :** Quelques titres correspondent — lequel voulez-vous ?

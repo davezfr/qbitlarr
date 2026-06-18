@@ -88,15 +88,15 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 <table>
   <tr>
     <td width="44%" align="center" valign="middle">
-      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="420" alt="Telegram example: sharing the IMDb page for The Hitch-Hiker, choosing a release, and watching qBitlarr download progress.">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="430" alt="Telegram example: sharing the IMDb page for The Hitch-Hiker, choosing a release, and watching qBitlarr download progress.">
     </td>
     <td width="56%" align="center" valign="middle">
-      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="440" alt="Telegram example: searching by title, selecting the right movie, choosing a release, and watching qBitlarr download progress.">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="430" alt="Telegram example: searching by title, selecting the right movie, choosing a release, and watching qBitlarr download progress.">
     </td>
   </tr>
 </table>
 
-*Screenshots for reference only. The titles shown are Public Domain examples; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.*
+*Screenshots for reference only. Left: an IMDb link or ID goes directly to release choices and download progress. Right: a title request first asks which title you mean, then shows release choices and progress. The demo title is a Public Domain example; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.*
 
 > **You:** *Download The Hitch-Hiker.*
 > **Agent:** A couple of titles match — which one?

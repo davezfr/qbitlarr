@@ -88,15 +88,15 @@ curl 'http://localhost:8000/health?deep=true'
 <table>
   <tr>
     <td width="44%" align="center" valign="middle">
-      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="420" alt="Telegram 示例：分享 The Hitch-Hiker 的 IMDb 页面，选择发布版本，并查看 qBitlarr 下载进度。">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" height="430" alt="Telegram 示例：分享 The Hitch-Hiker 的 IMDb 页面，选择发布版本，并查看 qBitlarr 下载进度。">
     </td>
     <td width="56%" align="center" valign="middle">
-      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="440" alt="Telegram 示例：通过标题搜索，选择正确电影，选择发布版本，并查看 qBitlarr 下载进度。">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" height="430" alt="Telegram 示例：通过标题搜索，选择正确电影，选择发布版本，并查看 qBitlarr 下载进度。">
     </td>
   </tr>
 </table>
 
-*截图示例仅供参考。图中标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐、字幕或版本而不同。*
+*截图示例仅供参考。左图展示 IMDb 链接或 ID 直接进入发布版本选择和下载进度；右图展示标题请求先确认具体影片，再进入发布版本选择和下载进度。Demo 标题为公共领域（Public Domain）示例；权利状态仍可能因司法辖区、具体发行版、修复版、配乐、字幕或版本而不同。*
 
 > **你：** *帮我下载 The Hitch-Hiker。*
 > **Agent：** 有几个标题可能匹配，你想要哪一个？
