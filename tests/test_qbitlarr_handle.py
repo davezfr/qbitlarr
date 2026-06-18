@@ -205,6 +205,25 @@ def test_handle_keyword_with_multiple_candidates_returns_choose_title(monkeypatc
         "The Hitchhiker's Guide to the Galaxy (2005)",
     ]
     assert payload["candidates"][0]["imdb_id"] == "tt0045877"
+    assert payload["choices_table"] == (
+        "1. The Hitch-Hiker (1953)\n"
+        "2. The Hitchhiker's Guide to the Galaxy (2005)"
+    )
+    assert payload["choice_display"] == (
+        "I found a few possible matches. Reply with the number of the title you mean:\n\n"
+        "```text\n"
+        "1. The Hitch-Hiker (1953)\n"
+        "2. The Hitchhiker's Guide to the Galaxy (2005)\n"
+        "```"
+    )
+    assert payload["choice_buttons"] == [
+        {"index": 1, "text": "1", "value": "1"},
+        {"index": 2, "text": "2", "value": "2"},
+    ]
+    assert payload["ui_hints"]["closed_choice"] is True
+    assert payload["choice_rich_message"]["format"] == "telegram-html"
+    assert "<caption>Title choices</caption>" in payload["choice_rich_message"]["html"]
+    assert "tt0045877" not in payload["choice_rich_message"]["html"]
 
 
 def test_handle_keyword_with_single_candidate_passes_through_to_release_search(monkeypatch, tmp_path):
@@ -1242,7 +1261,7 @@ def test_handle_imdb_show_results_includes_telegram_rich_table_without_links(mon
     assert "<pre>" not in html
 
 
-def test_handle_keyword_choose_title_has_no_release_table(monkeypatch, tmp_path):
+def test_handle_keyword_choose_title_uses_title_choice_table(monkeypatch, tmp_path):
     async def fake_candidates(query, settings, *, limit=5):
         return [
             _candidate("Parasite", imdb_id="tt6751668", year=2019),
@@ -1258,7 +1277,10 @@ def test_handle_keyword_choose_title_has_no_release_table(monkeypatch, tmp_path)
     assert response.status_code == 200
     payload = response.json()
     assert payload["action"] == "choose_title"
-    assert payload["choices_table"] is None
+    assert payload["choices_table"] == "1. Parasite (2019)\n2. Parasite (1982)"
+    assert payload["choice_display"].startswith("I found a few possible matches.")
+    assert "```text" in payload["choice_display"]
+    assert len(payload["choice_buttons"]) == 2
     assert payload["results"] is None
     assert len(payload["candidates"]) == 2
 

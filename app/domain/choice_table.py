@@ -3,7 +3,7 @@ from __future__ import annotations
 from html import escape
 
 from app.domain.quality import parse_quality
-from app.models import ManualSearchResult
+from app.models import ManualSearchResult, MovieCandidate
 
 SEEDERS_EMOJI = "🧲"
 SIZE_EMOJI = "💾"
@@ -89,6 +89,37 @@ def render_choice_rich_html(message: str, results: list[ManualSearchResult]) -> 
         f"<p><b>{escape(message)}</b></p>"
         "<table bordered striped>"
         "<caption>Release choices</caption>"
+        f"{''.join(rows)}"
+        "</table>"
+    )
+
+
+def render_title_choice_table(candidates: list[MovieCandidate]) -> str:
+    """Render a monospace title-choice list for ambiguous keyword matches."""
+    return "\n".join(f"{candidate.index}. {candidate.label}" for candidate in candidates)
+
+
+def render_title_choice_rich_html(message: str, candidates: list[MovieCandidate]) -> str:
+    """Render title candidates as Telegram rich-message HTML."""
+    rows = [
+        "<tr>"
+        "<th>#</th>"
+        "<th>Title</th>"
+        "<th>Year</th>"
+        "</tr>"
+    ]
+    for candidate in candidates:
+        rows.append(
+            "<tr>"
+            f'<td align="right"><b>{candidate.index}</b></td>'
+            f"<td>{escape(candidate.title)}</td>"
+            f'<td align="right">{escape(str(candidate.year)) if candidate.year else MISSING}</td>'
+            "</tr>"
+        )
+    return (
+        f"<p><b>{escape(message)}</b></p>"
+        "<table bordered striped>"
+        "<caption>Title choices</caption>"
         f"{''.join(rows)}"
         "</table>"
     )

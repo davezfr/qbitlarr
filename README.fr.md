@@ -228,7 +228,7 @@ La correspondance par mot-clé via Wikidata est volontairement légère ; certai
 
 Changez le mode serveur par défaut avec `QBITLARR_DEFAULT_MODE=manual|auto|confirm`.
 
-L'affichage des choix de releases reste neutre côté transport. La réponse inclut des `label` compacts pour les outils clarify/picker génériques, ainsi que `choices_table`, `choice_display`, `choice_rich_message`, `choice_buttons` et `ui_hints` pour les adaptateurs de chat plus riches. `choice_rich_message` est du rich HTML compatible Telegram Bot API 10.1 : un adaptateur peut passer sa valeur `html` comme `sendRichMessage.rich_message.html`, puis rendre `choice_buttons` dessous. Le défaut zéro configuration est compatible avec Hermes stock : `QBITLARR_MANUAL_RESULT_LIMIT=4` et `QBITLARR_CHOICE_STYLE=hermes-default`, ce qui correspond aux surfaces clarify de style Hermes qui affichent quatre choix et ajoutent leur propre option "Other". Si votre adaptateur local Telegram/Hermes sait rendre une table rich plus une ligne fermée de cinq boutons, définissez :
+L'affichage des choix reste neutre côté transport pour la désambiguïsation de titre (`choose_title`) et le choix de release (`show_results`). La réponse inclut des `label` compacts pour les outils clarify/picker génériques, ainsi que `choices_table`, `choice_display`, `choice_rich_message`, `choice_buttons` et `ui_hints` pour les adaptateurs de chat plus riches. `choice_rich_message` est du rich HTML compatible Telegram Bot API 10.1 : un adaptateur peut passer sa valeur `html` comme `sendRichMessage.rich_message.html`, puis rendre `choice_buttons` dessous. Le défaut zéro configuration des releases est compatible avec Hermes stock : `QBITLARR_MANUAL_RESULT_LIMIT=4` et `QBITLARR_CHOICE_STYLE=hermes-default`, ce qui correspond aux surfaces clarify de style Hermes qui affichent quatre choix et ajoutent leur propre option "Other". Si votre adaptateur local Telegram/Hermes sait rendre une table rich plus une ligne fermée de cinq boutons, définissez :
 
 ```sh
 QBITLARR_MANUAL_RESULT_LIMIT=5
@@ -321,7 +321,7 @@ Le schéma est identique — tous supportent l'un ou l'autre, voire les deux tra
 - **Voie stdio** : configurez le host pour lancer `bin/qbitlarr-mcp` comme sous-processus (avec les variables d'environnement pour l'URL de l'API et la clé optionnelle).
 - **Voie HTTP** : pointez le host vers `http://localhost:8000/mcp`, en ajoutant le header `X-API-Key` si vous en avez défini un.
 
-Pour `show_results`, les adaptateurs Telegram qui prennent en charge Bot API `sendRichMessage` doivent rendre `choice_rich_message` d'abord, puis placer `choice_buttons` dessous. Les autres hosts rich-text peuvent rendre `choice_display` ; les hosts texte brut peuvent afficher `choices_table` dans un bloc monospace. Les hosts clarify/picker génériques doivent passer le `label` de chaque résultat comme liste de choix.
+Pour `choose_title` et `show_results`, les adaptateurs Telegram qui prennent en charge Bot API `sendRichMessage` doivent rendre `choice_rich_message` d'abord, puis placer `choice_buttons` dessous. Les autres hosts rich-text peuvent rendre `choice_display` ; les hosts texte brut peuvent afficher `choices_table` dans un bloc monospace. Les hosts clarify/picker génériques doivent passer le `label` de chaque titre candidat ou résultat comme liste de choix.
 
 ### Indiquer à l'agent quand utiliser qBitlarr
 

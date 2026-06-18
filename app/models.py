@@ -245,7 +245,7 @@ class MovieCandidate(BaseModel):
 
 
 class ChoiceButton(BaseModel):
-    index: int = Field(description="One-based choice index that maps to a ManualSearchResult.index")
+    index: int = Field(description="One-based choice index that maps to a result or candidate index")
     text: str = Field(description="Short button label for chat UIs, usually the numeric choice")
     value: str = Field(description="Opaque value to send back when this choice is selected")
 
@@ -280,23 +280,23 @@ class HandleResponse(BaseModel):
     choices_table: str | None = Field(
         default=None,
         description=(
-            "Pre-rendered aligned monospace choice table for IMDb-resolved result "
-            "lists. Send verbatim inside a monospace block; do not re-format. "
+            "Pre-rendered monospace choice table for release choices or title "
+            "candidates. Send verbatim inside a monospace block; do not re-format. "
             "Recommendation, if any, should be conveyed by the surrounding UI."
         ),
     )
     choice_display: str | None = Field(
         default=None,
         description=(
-            "Complete formatted release-choice message for chat surfaces that can render Markdown "
+            "Complete formatted choice message for chat surfaces that can render Markdown "
             "or rich text. It includes the message plus a monospace choice table."
         ),
     )
     choice_buttons: list[ChoiceButton] | None = Field(
         default=None,
         description=(
-            "Closed-choice button metadata for release choices. Values are numeric indexes, never "
-            "download links; call qbitlarr_download with the matching result's download_link."
+            "Closed-choice button metadata. Values are numeric indexes, never download links "
+            "or private IDs; map them back to the matching result or candidate."
         ),
     )
     ui_hints: ChoiceUiHints | None = Field(
@@ -306,7 +306,7 @@ class HandleResponse(BaseModel):
     choice_rich_message: ChoiceRichMessage | None = Field(
         default=None,
         description=(
-            "Telegram-rich formatted release choices. Hosts that support Telegram Bot API "
+            "Telegram-rich formatted choices. Hosts that support Telegram Bot API "
             "sendRichMessage can pass html as rich_message.html and render choice_buttons below it."
         ),
     )

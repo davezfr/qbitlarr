@@ -24,7 +24,12 @@ from app.domain.quality import (
     normalize_user_message,
     parse_quality,
 )
-from app.domain.choice_table import render_choice_rich_html, render_choice_table
+from app.domain.choice_table import (
+    render_choice_rich_html,
+    render_choice_table,
+    render_title_choice_rich_html,
+    render_title_choice_table,
+)
 from app.domain.save_paths import default_save_path_for_title, validate_save_path_override
 from app.domain.torrent_metadata import parse_torrent_name
 from app.exceptions import ConfigurationError, UpstreamServiceError
@@ -809,6 +814,8 @@ def _choose_title_response(
     settings: Settings,
 ) -> HandleResponse:
     base_request = SearchRequest(query=user_message, categories=get_categories(user_message))
+    movie_candidates = _to_movie_candidates(candidates)
+    choices_table = render_title_choice_table(movie_candidates) if movie_candidates else None
     store.create(
         query_id=query_id,
         request=_snapshot_request_payload(user_message=user_message, search_request=base_request, settings=settings),
@@ -820,9 +827,14 @@ def _choose_title_response(
         status="success",
         action="choose_title",
         message=CHOOSE_TITLE_MESSAGE,
+        choices_table=choices_table,
+        choice_display=_choice_display(CHOOSE_TITLE_MESSAGE, choices_table),
+        choice_buttons=_candidate_choice_buttons(movie_candidates) if movie_candidates else None,
+        ui_hints=_choice_ui_hints(_choice_style(settings)) if movie_candidates else None,
+        choice_rich_message=_title_choice_rich_message(CHOOSE_TITLE_MESSAGE, movie_candidates) if movie_candidates else None,
         query_id=query_id,
         snapshot_status="title_candidates",
-        candidates=_to_movie_candidates(candidates),
+        candidates=movie_candidates,
     )
 
 
@@ -895,10 +907,25 @@ def _choice_buttons(results: list[ManualSearchResult]) -> list[ChoiceButton]:
     ]
 
 
+def _candidate_choice_buttons(candidates: list[MovieCandidate]) -> list[ChoiceButton]:
+    return [
+        ChoiceButton(index=candidate.index, text=str(candidate.index), value=str(candidate.index))
+        for candidate in candidates
+    ]
+
+
 def _choice_rich_message(message: str, results: list[ManualSearchResult]) -> ChoiceRichMessage:
     return ChoiceRichMessage(
         format="telegram-html",
         html=render_choice_rich_html(message, results),
+        skip_entity_detection=True,
+    )
+
+
+def _title_choice_rich_message(message: str, candidates: list[MovieCandidate]) -> ChoiceRichMessage:
+    return ChoiceRichMessage(
+        format="telegram-html",
+        html=render_title_choice_rich_html(message, candidates),
         skip_entity_detection=True,
     )
 

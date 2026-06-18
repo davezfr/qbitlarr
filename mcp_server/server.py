@@ -76,9 +76,13 @@ def create_mcp_server() -> FastMCP:
           - "confirm" (mode="confirm"): the top pick plus alternatives, nothing
             queued.
           - "choose_title": a keyword matched several titles. The "candidates"
-            list holds {index, title, year, imdb_id, label}. Ask the user which
-            one they mean (show each "label"), then call qbitlarr_handle again
-            with the chosen candidate's imdb_id to get its release choices.
+            list holds {index, title, year, imdb_id, label}. If present, render
+            "choice_rich_message", "choice_display", or "choices_table" the same
+            way as release choices so the title-picking step visually matches the
+            release-picking step. For generic clarify/picker tools, pass each
+            candidate "label" field as the choices array. After the user picks
+            a title, call qbitlarr_handle again with the chosen candidate's
+            imdb_id to get its release choices.
           - "needs_imdb": no title could be identified (an unresolved link or a
             keyword with no match). Relay the message and ask the user to send
             an IMDb link or ID.
