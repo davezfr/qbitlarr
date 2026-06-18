@@ -88,10 +88,10 @@ Les exemples ci-dessous utilisent [The Hitch-Hiker (1953)](https://www.imdb.com/
 <table>
   <tr>
     <td width="50%">
-      <img src="docs/screenshots/telegram-imdb-share.jpg" alt="Exemple Telegram : partager la page IMDb de The Hitch-Hiker avec un agent, qui lance le téléchargement via qBitlarr.">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" alt="Exemple Telegram : partager la page IMDb de The Hitch-Hiker, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
     </td>
     <td width="50%">
-      <img src="docs/screenshots/telegram-public-domain-selection.jpg" alt="Exemple Telegram : choisir et vérifier l'état d'un téléchargement de Night of the Living Dead 1968.">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" alt="Exemple Telegram : rechercher par titre, choisir le bon film, choisir une release, puis suivre la progression du téléchargement qBitlarr.">
     </td>
   </tr>
 </table>
@@ -453,6 +453,12 @@ L'API REST est la surface canonique ; la CLI et le MCP stdio sont des clients fi
 ## Pair With Babelarr For Subtitles
 
 qBitlarr gère l'acquisition ; associez-le à [Babelarr](https://github.com/davezfr/babelarr) pour préparer les sous-titres après la fin d'un téléchargement. Quand les deux serveurs MCP sont disponibles pour un même agent, *"Download The Hitch-Hiker and add Chinese-English subtitles"* devient : qBitlarr met le film en file, puis dès qu'un chemin local existe Babelarr trouve ou télécharge un sous-titre source, le traduit, et écrit le sidecar SRT/ASS. Pour une file plus durable, exposez aussi le Runtime MCP de Babelarr : il mémorise le téléchargement et déclenche Babelarr quand le chemin est prêt.
+
+<p>
+  <img src="docs/screenshots/telegram-qbitlarr-babelarr-one-shot.jpg" alt="Exemple Telegram : une seule demande télécharge His Girl Friday avec qBitlarr puis prépare des sous-titres chinois-anglais avec Babelarr.">
+</p>
+
+*Capture du workflow combiné fournie à titre d'exemple uniquement. La démo utilise un titre du domaine public ; les droits peuvent varier selon la juridiction, la restauration, la bande-son, les sous-titres ou l'édition précise.*
 
 ## Projets tiers
 

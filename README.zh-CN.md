@@ -88,10 +88,10 @@ curl 'http://localhost:8000/health?deep=true'
 <table>
   <tr>
     <td width="50%">
-      <img src="docs/screenshots/telegram-imdb-share.jpg" alt="Telegram 示例：把 The Hitch-Hiker 的 IMDb 页面分享给 Agent，Agent 通过 qBitlarr 开始下载。">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" alt="Telegram 示例：分享 The Hitch-Hiker 的 IMDb 页面，选择发布版本，并查看 qBitlarr 下载进度。">
     </td>
     <td width="50%">
-      <img src="docs/screenshots/telegram-public-domain-selection.jpg" alt="Telegram 示例：选择并查看 Night of the Living Dead 1968 下载状态。">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" alt="Telegram 示例：通过标题搜索，选择正确电影，选择发布版本，并查看 qBitlarr 下载进度。">
     </td>
   </tr>
 </table>
@@ -453,6 +453,12 @@ REST API 是 canonical surface；CLI 和 stdio MCP 都是 `app/client.py` 的薄
 ## Pair With Babelarr For Subtitles
 
 qBitlarr 负责获取媒体；如果下载完成后还要准备字幕，可以和 [Babelarr](https://github.com/davezfr/babelarr) 配合使用。当同一个 Agent 同时接入两个 MCP server 时，*"Download The Hitch-Hiker and add Chinese-English subtitles"* 就会变成：qBitlarr 先把电影加入下载队列，等它有了本地路径后，Babelarr 查找或下载源字幕、翻译字幕，并写出 SRT/ASS sidecar。需要更持久的队列时，也可以暴露 Babelarr 的 Runtime MCP server；它会记住下载任务，并在路径就绪后调度 Babelarr。
+
+<p>
+  <img src="docs/screenshots/telegram-qbitlarr-babelarr-one-shot.jpg" alt="Telegram 示例：一句话请求用 qBitlarr 下载 His Girl Friday，并用 Babelarr 准备中英双语字幕。">
+</p>
+
+*组合工作流截图仅供参考。Demo 使用公共领域（Public Domain）标题；权利状态仍可能因司法辖区、具体修复版、配乐、字幕或版本而不同。*
 
 ## 第三方项目
 

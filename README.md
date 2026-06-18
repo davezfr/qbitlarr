@@ -88,10 +88,10 @@ The examples below use [The Hitch-Hiker (1953)](https://www.imdb.com/title/tt004
 <table>
   <tr>
     <td width="50%">
-      <img src="docs/screenshots/telegram-imdb-share.jpg" alt="Telegram example: sharing the IMDb page for The Hitch-Hiker to an agent, which starts the download through qBitlarr.">
+      <img src="docs/screenshots/telegram-imdb-release-picker.jpg" alt="Telegram example: sharing the IMDb page for The Hitch-Hiker, choosing a release, and watching qBitlarr download progress.">
     </td>
     <td width="50%">
-      <img src="docs/screenshots/telegram-public-domain-selection.jpg" alt="Telegram example: choosing and checking the status of a Night of the Living Dead 1968 download.">
+      <img src="docs/screenshots/telegram-title-release-picker.jpg" alt="Telegram example: searching by title, selecting the right movie, choosing a release, and watching qBitlarr download progress.">
     </td>
   </tr>
 </table>
@@ -453,6 +453,12 @@ The REST API is the canonical surface; the CLI and stdio MCP are thin clients of
 ## Pair With Babelarr For Subtitles
 
 qBitlarr handles acquisition; pair it with [Babelarr](https://github.com/davezfr/babelarr) to prepare subtitles after a download finishes. When both MCP servers are available to one agent, *"Download The Hitch-Hiker and add Chinese-English subtitles"* becomes: qBitlarr queues the movie, and once it has a local path Babelarr finds or downloads a source subtitle, translates it, and writes the SRT/ASS sidecar. For a durable queue, also expose Babelarr's Runtime MCP server — it remembers the download and dispatches Babelarr when the path is ready.
+
+<p>
+  <img src="docs/screenshots/telegram-qbitlarr-babelarr-one-shot.jpg" alt="Telegram example: one request downloads His Girl Friday with qBitlarr and then prepares Chinese-English subtitles with Babelarr.">
+</p>
+
+*Combined workflow screenshot for reference only. The demo uses a public-domain title; rights can vary by jurisdiction and by specific restoration, soundtrack, subtitles, or edition.*
 
 ## Third-Party Projects
 
