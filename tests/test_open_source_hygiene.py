@@ -136,8 +136,9 @@ def test_tracked_text_files_do_not_reintroduce_legacy_media_examples():
 
 def test_readme_screenshots_are_referenced_and_explained():
     screenshot_paths = [
-        "docs/screenshots/telegram-imdb-share.jpg",
-        "docs/screenshots/telegram-public-domain-selection.jpg",
+        "docs/screenshots/telegram-imdb-release-picker.jpg",
+        "docs/screenshots/telegram-title-release-picker.jpg",
+        "docs/screenshots/telegram-qbitlarr-babelarr-one-shot.jpg",
     ]
     readmes = [
         REPO_ROOT / "README.md",
