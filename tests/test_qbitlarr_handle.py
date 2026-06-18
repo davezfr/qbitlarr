@@ -50,6 +50,7 @@ def _settings(tmp_path, *, fallback_indexer_ids: list[int] | None = None):
         qbitlarr_save_path_movie_4k="/downloads/movies-4k",
         qbitlarr_save_path_tv="/downloads/tv",
         qbitlarr_extra_save_paths=["/media/Kids"],
+        default_mode="auto",
     )
 
 
@@ -1046,6 +1047,12 @@ def test_settings_default_mode_is_manual():
     assert Settings.__dataclass_fields__["default_mode"].default == "manual"
 
 
+def test_resolve_mode_defaults_to_manual_for_minimal_settings():
+    from app.api.handle import _resolve_mode
+
+    assert _resolve_mode(None, SimpleNamespace()) == "manual"
+
+
 def test_handle_imdb_without_mode_returns_choices_not_auto_download(monkeypatch, tmp_path):
     queued: dict = {}
 
@@ -1123,6 +1130,116 @@ def test_handle_imdb_show_results_includes_choices_table(monkeypatch, tmp_path):
     assert first_line.startswith("1.")
     assert "★" not in table  # recommendation is conveyed by the starred button, not the table
     assert "🧲" in table and "💾" in table
+
+
+def test_handle_imdb_show_results_defaults_to_four_choices_for_stock_hermes(monkeypatch, tmp_path):
+    async def fake_search_prowlarr(request, settings):
+        return [
+            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=80, link_suffix="h264"),
+            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.265-GRP", seeders=70, link_suffix="h265"),
+            _result("The.Hitch-Hiker.1953.1080p.WEBRip.H.264-GRP", seeders=60, link_suffix="webrip-h264"),
+            _result("The.Hitch-Hiker.1953.1080p.BluRay.H.264-GRP", seeders=50, link_suffix="bluray-h264"),
+            _result("The.Hitch-Hiker.1953.1080p.BluRay.H.265-GRP", seeders=40, link_suffix="bluray-h265"),
+        ]
+
+    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.get_settings", lambda: _settings_with_prefs(tmp_path, default_mode="manual"))
+
+    client = TestClient(app)
+    response = client.post("/handle", json={"user_message": "tt0045877"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "show_results"
+    assert len(payload["results"]) == 4
+    assert len(payload["choice_buttons"]) == 4
+    assert payload["choice_buttons"] == [
+        {"index": 1, "text": "1", "value": "1"},
+        {"index": 2, "text": "2", "value": "2"},
+        {"index": 3, "text": "3", "value": "3"},
+        {"index": 4, "text": "4", "value": "4"},
+    ]
+    assert payload["ui_hints"] == {
+        "choice_style": "hermes-default",
+        "recommended_button_layout": "vertical",
+        "closed_choice": True,
+    }
+    assert payload["choice_display"].startswith("Here are the top results")
+    assert "```text" in payload["choice_display"]
+    assert len(payload["choices_table"].splitlines()) == 4
+
+
+def test_handle_imdb_show_results_can_return_five_choices_for_custom_telegram_rich(monkeypatch, tmp_path):
+    async def fake_search_prowlarr(request, settings):
+        return [
+            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=80, link_suffix="h264"),
+            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.265-GRP", seeders=70, link_suffix="h265"),
+            _result("The.Hitch-Hiker.1953.1080p.WEBRip.H.264-GRP", seeders=60, link_suffix="webrip-h264"),
+            _result("The.Hitch-Hiker.1953.1080p.BluRay.H.264-GRP", seeders=50, link_suffix="bluray-h264"),
+            _result("The.Hitch-Hiker.1953.1080p.BluRay.H.265-GRP", seeders=40, link_suffix="bluray-h265"),
+        ]
+
+    settings = _settings_with_prefs(
+        tmp_path,
+        default_mode="manual",
+        manual_result_limit=5,
+        choice_style="telegram-rich",
+    )
+    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.get_settings", lambda: settings)
+
+    client = TestClient(app)
+    response = client.post("/handle", json={"user_message": "tt0045877"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "show_results"
+    assert len(payload["results"]) == 5
+    assert len(payload["choice_buttons"]) == 5
+    assert payload["choice_buttons"][-1] == {"index": 5, "text": "5", "value": "5"}
+    assert payload["ui_hints"] == {
+        "choice_style": "telegram-rich",
+        "recommended_button_layout": "inline-row",
+        "closed_choice": True,
+    }
+    assert len(payload["choices_table"].splitlines()) == 5
+
+
+def test_handle_imdb_show_results_includes_telegram_rich_table_without_links(monkeypatch, tmp_path):
+    async def fake_search_prowlarr(request, settings):
+        return [
+            _result("The.Hitch-Hiker.1953.1080p.WEB-DL.H.264-GRP", seeders=80, link_suffix="h264"),
+            _result("The.Hitch-Hiker.1953.2160p.UHD.BluRay.REMUX.H.265-GRP", seeders=50, link_suffix="remux"),
+        ]
+
+    settings = _settings_with_prefs(
+        tmp_path,
+        default_mode="manual",
+        manual_result_limit=5,
+        choice_style="telegram-rich",
+    )
+    monkeypatch.setattr("app.api.handle.search_prowlarr", fake_search_prowlarr)
+    monkeypatch.setattr("app.api.handle.get_settings", lambda: settings)
+
+    client = TestClient(app)
+    response = client.post("/handle", json={"user_message": "tt0045877 4K"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    rich_message = payload["choice_rich_message"]
+    assert rich_message["format"] == "telegram-html"
+    assert rich_message["skip_entity_detection"] is True
+    html = rich_message["html"]
+    assert html.startswith("<p><b>Here are the top results")
+    assert "<table bordered striped>" in html
+    assert "<th>#</th>" in html
+    assert "<th>Resolution</th>" in html
+    assert '<td align="right"><b>1</b></td>' in html
+    assert '<td align="right">50</td>' in html
+    assert "2160p" in html
+    assert "REMUX" in html
+    assert "https://example.test" not in html
+    assert "<pre>" not in html
 
 
 def test_handle_keyword_choose_title_has_no_release_table(monkeypatch, tmp_path):

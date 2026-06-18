@@ -214,7 +214,7 @@ QBITLARR_MIN_SEEDERS=5
 
 1. **识别标题。** IMDb ID/URL 或受支持的 Douban/AlloCine 链接会直接解析。普通关键词会通过 Wikidata 匹配（不需要 API key 或额外账号）。如果命中多个标题，qBitlarr 返回 `choose_title` 列表（标题 + 年份）并等待用户选择；如果没有匹配，返回 `needs_imdb` 并要求 IMDb 链接。
 2. **排序发布版本。** 对这个具体标题，按你的质量偏好排序。
-3. **返回前 5 个左右的发布版本候选** 让用户选择；或者在 `auto` 模式下直接加入最佳版本。
+3. **默认返回前 4 个发布版本候选** 让用户选择；或者在 `auto` 模式下直接加入最佳版本。
 
 Wikidata 关键词匹配是有意保持轻量的，所以冷门标题可能无法解析；这种情况下 qBitlarr 会要求 IMDb 链接，而不是猜测。
 
@@ -227,6 +227,15 @@ Wikidata 关键词匹配是有意保持轻量的，所以冷门标题可能无�
 - `confirm` — 返回首选项和备选项，但不加入队列。
 
 可以通过 `QBITLARR_DEFAULT_MODE=manual|auto|confirm` 修改服务默认模式。
+
+发布版本选择的展示是 transport-neutral 的。响应里会包含适合普通 clarify/picker 工具的紧凑 `label`，也会包含给更强聊天适配层使用的 `choices_table`、`choice_display`、`choice_rich_message`、`choice_buttons` 和 `ui_hints`。`choice_rich_message` 是面向 Telegram Bot API 10.1 的 rich HTML；adapter 可以把它的 `html` 作为 `sendRichMessage.rich_message.html`，并在下面渲染 `choice_buttons`。零配置默认值面向 stock Hermes：`QBITLARR_MANUAL_RESULT_LIMIT=4` 和 `QBITLARR_CHOICE_STYLE=hermes-default`，匹配 Hermes 风格 clarify 默认展示 4 个选择并自动追加 "Other" 的行为。如果你的本地 Telegram/Hermes adapter 可以渲染 rich table 加一排 5 个封闭按钮，可以设置：
+
+```sh
+QBITLARR_MANUAL_RESULT_LIMIT=5
+QBITLARR_CHOICE_STYLE=telegram-rich
+```
+
+这只改变 qBitlarr 返回的结构化响应；真正的横排按钮布局仍然属于你的本地聊天适配层或 Hermes profile。
 
 ## 已完成任务清理
 
@@ -311,6 +320,8 @@ stdio MCP wrapper 还可以向 Hermes 风格目标发送 **一次性完成通知
 
 - **Stdio 方式**：让 host 把 `bin/qbitlarr-mcp` 作为子进程启动（通过环境变量传 API URL 和可选的 API key）。
 - **HTTP 方式**：把 host 指向 `http://localhost:8000/mcp`，如果设了 API key 就加上 `X-API-Key` header。
+
+对于 `show_results`，支持 Bot API `sendRichMessage` 的 Telegram adapter 应该优先渲染 `choice_rich_message`，并把 `choice_buttons` 放在下面。其它 rich-text host 可以渲染 `choice_display`；纯文本 host 可以把 `choices_table` 放进 monospace block。普通 clarify/picker host 应该把每个结果的 `label` 作为选择列表。
 
 ### 告诉 Agent 什么时候用 qBitlarr
 

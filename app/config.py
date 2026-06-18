@@ -21,6 +21,8 @@ _RETENTION_ACTIONS = {
     "enablesuperseeding": "EnableSuperSeeding",
 }
 
+_CHOICE_STYLES = {"hermes-default", "telegram-rich"}
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -44,6 +46,8 @@ class Settings:
     prefer_codec: str = DEFAULT_PREFER_CODEC
     min_seeders: int = MIN_AUTO_DOWNLOAD_SEEDERS
     default_mode: str = "manual"
+    manual_result_limit: int = 4
+    choice_style: str = "hermes-default"
     retention_enabled: bool = False
     retention_ratio_limit: float | None = 2.0
     retention_seeding_time_limit_minutes: int | None = 10080
@@ -85,6 +89,8 @@ class Settings:
             prefer_codec=_env_with_default("QBITLARR_PREFER_CODEC", DEFAULT_PREFER_CODEC),
             min_seeders=int(os.getenv("QBITLARR_MIN_SEEDERS", str(MIN_AUTO_DOWNLOAD_SEEDERS))),
             default_mode=_env_with_default("QBITLARR_DEFAULT_MODE", "manual").lower(),
+            manual_result_limit=_bounded_int_env("QBITLARR_MANUAL_RESULT_LIMIT", default=4, minimum=1, maximum=10),
+            choice_style=_choice_style_env("QBITLARR_CHOICE_STYLE", "hermes-default"),
             retention_enabled=_env_bool("QBITLARR_RETENTION_ENABLED", False),
             retention_ratio_limit=_optional_float_env("QBITLARR_RETENTION_RATIO_LIMIT", default=2.0),
             retention_seeding_time_limit_minutes=_optional_int_env(
@@ -161,6 +167,22 @@ def _optional_int_env(name: str, *, default: int | None = None) -> int | None:
     if not value.strip():
         return None
     return int(value.strip())
+
+
+def _bounded_int_env(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    value = _optional_int_env(name, default=default)
+    if value is None:
+        value = default
+    if value < minimum or value > maximum:
+        raise ConfigurationError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+def _choice_style_env(name: str, default: str) -> str:
+    value = _env_with_default(name, default).strip().lower()
+    if value not in _CHOICE_STYLES:
+        raise ConfigurationError(f"{name} must be one of: {', '.join(sorted(_CHOICE_STYLES))}")
+    return value
 
 
 def _retention_action_env(name: str, default: str) -> str:

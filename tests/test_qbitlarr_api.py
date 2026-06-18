@@ -30,6 +30,8 @@ def test_settings_defaults_public_save_paths(monkeypatch):
     monkeypatch.delenv("QBITLARR_SAVE_PATH_MOVIE_4K", raising=False)
     monkeypatch.delenv("QBITLARR_SAVE_PATH_TV", raising=False)
     monkeypatch.delenv("QBITLARR_EXTRA_SAVE_PATHS", raising=False)
+    monkeypatch.delenv("QBITLARR_MANUAL_RESULT_LIMIT", raising=False)
+    monkeypatch.delenv("QBITLARR_CHOICE_STYLE", raising=False)
 
     settings = Settings.from_env()
 
@@ -37,6 +39,8 @@ def test_settings_defaults_public_save_paths(monkeypatch):
     assert settings.qbitlarr_save_path_movie_4k == "/downloads/movies-4k"
     assert settings.qbitlarr_save_path_tv == "/downloads/tv"
     assert settings.qbitlarr_extra_save_paths is None
+    assert settings.manual_result_limit == 4
+    assert settings.choice_style == "hermes-default"
 
 
 def test_settings_accepts_custom_save_paths(monkeypatch):
@@ -56,6 +60,34 @@ def test_settings_accepts_custom_save_paths(monkeypatch):
     assert settings.qbitlarr_save_path_movie_4k == "/media/Movies 4K"
     assert settings.qbitlarr_save_path_tv == "/media/TV"
     assert settings.qbitlarr_extra_save_paths == ["/media/Kids", "/media/Documentaries"]
+
+
+def test_settings_accepts_custom_choice_display(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.setenv("QBITLARR_MANUAL_RESULT_LIMIT", "5")
+    monkeypatch.setenv("QBITLARR_CHOICE_STYLE", "telegram-rich")
+
+    settings = Settings.from_env()
+
+    assert settings.manual_result_limit == 5
+    assert settings.choice_style == "telegram-rich"
+
+
+def test_settings_blank_choice_limit_uses_default(monkeypatch):
+    monkeypatch.setenv("PROWLARR_URL", "http://prowlarr:9696")
+    monkeypatch.setenv("PROWLARR_API_KEY", "prowlarr-key")
+    monkeypatch.setenv("QBIT_URL", "http://host.docker.internal:8080")
+    monkeypatch.setenv("QBIT_USERNAME", "qbit-user")
+    monkeypatch.setenv("QBIT_PASSWORD", "qbit-pass")
+    monkeypatch.setenv("QBITLARR_MANUAL_RESULT_LIMIT", "")
+
+    settings = Settings.from_env()
+
+    assert settings.manual_result_limit == 4
 
 
 def test_settings_retention_policy_defaults_to_disabled(monkeypatch):

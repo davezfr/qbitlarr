@@ -131,7 +131,7 @@ The fastest way to use qBitlarr is to skip typing the title:
 
 1. In IMDb, Douban, AlloCine, or any site that shares one of those supported movie URLs, find what you want.
 2. Tap the share icon → pick the chat app where your agent lives (Telegram, WhatsApp, Discord, Signal, iMessage, etc.).
-3. The agent receives a URL like `https://www.imdb.com/title/tt0045877/` or `https://movie.douban.com/subject/1292052/`, resolves it to the canonical IMDb flow, and auto-identifies the title — no typing, no spelling traps, no ambiguity.
+3. The agent receives a URL like `https://www.imdb.com/title/tt0045877/`, resolves it to the canonical IMDb flow, and auto-identifies the title — no typing, no spelling traps, no ambiguity.
 
 A raw IMDb ID like `tt0045877` works the same way if you have one handy. qBitlarr also accepts `douban:1292052` and `allocine:25801` for supported movie IDs. It resolves those IDs and jumps straight to the ranked release choices for that exact title — no title-matching step.
 
@@ -214,7 +214,7 @@ Every `/handle` request follows the same path, so a keyword and an IMDb link end
 
 1. **Identify the title.** An IMDb ID/URL or a supported Douban/AlloCine link resolves directly. A plain keyword is matched against Wikidata (no API key, no extra account). If several titles match, qBitlarr returns a `choose_title` list (title + year) and waits for the user to pick one; if nothing matches, it returns `needs_imdb` and asks for an IMDb link.
 2. **Rank releases** for that one title using your quality preferences.
-3. **Return the top ~5 release choices** to pick from — or, in `auto` mode, queue the best one outright.
+3. **Return the top 4 release choices by default** to pick from — or, in `auto` mode, queue the best one outright.
 
 Wikidata keyword matching is intentionally lightweight, so obscure titles may not resolve; that is when qBitlarr asks for an IMDb link instead of guessing.
 
@@ -227,6 +227,15 @@ Wikidata keyword matching is intentionally lightweight, so obscure titles may no
 - `confirm` — return the top pick plus runner-ups, but do **not** queue.
 
 Override the server-wide default with `QBITLARR_DEFAULT_MODE=manual|auto|confirm`.
+
+Release-choice display is transport-neutral. The response includes compact `label` values for generic clarify/picker tools, plus `choices_table`, `choice_display`, `choice_rich_message`, `choice_buttons`, and `ui_hints` for richer chat adapters. `choice_rich_message` is Telegram Bot API 10.1-friendly rich HTML: adapters can pass its `html` value as `sendRichMessage.rich_message.html` and render `choice_buttons` below it. The zero-config default is stock Hermes-friendly: `QBITLARR_MANUAL_RESULT_LIMIT=4` and `QBITLARR_CHOICE_STYLE=hermes-default`, matching Hermes-style clarify surfaces that show four choices and add their own "Other" option. If your local Telegram/Hermes adapter can render a rich table plus a closed row of five buttons, set:
+
+```sh
+QBITLARR_MANUAL_RESULT_LIMIT=5
+QBITLARR_CHOICE_STYLE=telegram-rich
+```
+
+That changes qBitlarr's structured response only; the actual horizontal button layout still belongs in your local chat adapter or Hermes profile.
 
 ## Completed Task Cleanup
 
@@ -311,6 +320,8 @@ The pattern is the same — they all support one or both transports:
 
 - **Stdio path**: configure the host to launch `bin/qbitlarr-mcp` as a subprocess (with env vars for the API URL and optional API key).
 - **HTTP path**: point the host at `http://localhost:8000/mcp` with the `X-API-Key` header if you set one.
+
+For `show_results`, Telegram adapters that support Bot API `sendRichMessage` should render `choice_rich_message` first and place `choice_buttons` below it. Other rich-text hosts can render `choice_display`; plain hosts can render `choices_table` inside a monospace block. Generic clarify/picker hosts should pass each result's `label` as the choice list.
 
 ### Tell your agent when to use qBitlarr
 

@@ -244,6 +244,35 @@ class MovieCandidate(BaseModel):
     )
 
 
+class ChoiceButton(BaseModel):
+    index: int = Field(description="One-based choice index that maps to a ManualSearchResult.index")
+    text: str = Field(description="Short button label for chat UIs, usually the numeric choice")
+    value: str = Field(description="Opaque value to send back when this choice is selected")
+
+
+class ChoiceUiHints(BaseModel):
+    choice_style: Literal["hermes-default", "telegram-rich"] = Field(
+        description="Display profile requested by qBitlarr configuration."
+    )
+    recommended_button_layout: Literal["vertical", "inline-row"] = Field(
+        description="Suggested button layout for hosts that can control inline keyboards."
+    )
+    closed_choice: bool = Field(
+        description="Whether callers should present only the supplied choices instead of a free-form picker."
+    )
+
+
+class ChoiceRichMessage(BaseModel):
+    format: Literal["telegram-html"] = Field(
+        description="Rich-message format. Pass html as InputRichMessage.html for Telegram sendRichMessage."
+    )
+    html: str = Field(description="Telegram rich message HTML for the formatted release choices.")
+    skip_entity_detection: bool = Field(
+        default=True,
+        description="Pass through to InputRichMessage.skip_entity_detection to keep table text stable."
+    )
+
+
 class HandleResponse(BaseModel):
     status: Literal["success", "not_found"]
     action: Literal["auto_download", "show_results", "confirm", "choose_title", "needs_imdb"]
@@ -252,8 +281,33 @@ class HandleResponse(BaseModel):
         default=None,
         description=(
             "Pre-rendered aligned monospace choice table for IMDb-resolved result "
-            "lists. Send verbatim inside a monospace block; do not re-format. The "
-            "recommended row is marked with a star."
+            "lists. Send verbatim inside a monospace block; do not re-format. "
+            "Recommendation, if any, should be conveyed by the surrounding UI."
+        ),
+    )
+    choice_display: str | None = Field(
+        default=None,
+        description=(
+            "Complete formatted release-choice message for chat surfaces that can render Markdown "
+            "or rich text. It includes the message plus a monospace choice table."
+        ),
+    )
+    choice_buttons: list[ChoiceButton] | None = Field(
+        default=None,
+        description=(
+            "Closed-choice button metadata for release choices. Values are numeric indexes, never "
+            "download links; call qbitlarr_download with the matching result's download_link."
+        ),
+    )
+    ui_hints: ChoiceUiHints | None = Field(
+        default=None,
+        description="Rendering hints for adapters that can customize button layout."
+    )
+    choice_rich_message: ChoiceRichMessage | None = Field(
+        default=None,
+        description=(
+            "Telegram-rich formatted release choices. Hosts that support Telegram Bot API "
+            "sendRichMessage can pass html as rich_message.html and render choice_buttons below it."
         ),
     )
     query_id: str | None = None

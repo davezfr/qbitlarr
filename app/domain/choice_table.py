@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from html import escape
+
 from app.domain.quality import parse_quality
 from app.models import ManualSearchResult
 
@@ -14,8 +16,8 @@ def render_choice_table(results: list[ManualSearchResult]) -> str:
 
     Designed for Telegram <pre> blocks: every row places the same emojis at the
     same column, so the rows stay vertically aligned despite emoji width
-    varying between platforms. The recommended choice is conveyed by the
-    starred clarify button, not by an extra glyph in the table.
+    varying between platforms. Recommendation, if any, is conveyed by the
+    surrounding picker UI instead of an extra glyph in the table.
     """
     if not results:
         return ""
@@ -52,6 +54,44 @@ def render_choice_table(results: list[ManualSearchResult]) -> str:
         parts.append(f"{SIZE_EMOJI} {row['size'].rjust(size_width)}")
         lines.append("  ".join(parts))
     return "\n".join(lines)
+
+
+def render_choice_rich_html(message: str, results: list[ManualSearchResult]) -> str:
+    """Render release choices as Telegram rich-message HTML.
+
+    Telegram rich tables remove the need for monospace alignment tricks while
+    keeping download links out of the chat-rendering payload.
+    """
+    rows = [
+        "<tr>"
+        "<th>#</th>"
+        "<th>Resolution</th>"
+        "<th>Source</th>"
+        "<th>Codec</th>"
+        "<th>Seeders</th>"
+        "<th>Size</th>"
+        "</tr>"
+    ]
+    for result in results:
+        parsed = parse_quality(result.title)
+        source = "REMUX" if parsed.is_remux and parsed.source in {None, "BluRay"} else (parsed.source or MISSING)
+        rows.append(
+            "<tr>"
+            f'<td align="right"><b>{result.index}</b></td>'
+            f"<td>{escape(parsed.resolution or MISSING)}</td>"
+            f"<td>{escape(source)}</td>"
+            f"<td>{escape(parsed.codec or MISSING)}</td>"
+            f'<td align="right">{escape(str(result.seeders) if result.seeders is not None else MISSING)}</td>'
+            f'<td align="right">{escape(_compact_size(result.size))}</td>'
+            "</tr>"
+        )
+    return (
+        f"<p><b>{escape(message)}</b></p>"
+        "<table bordered striped>"
+        "<caption>Release choices</caption>"
+        f"{''.join(rows)}"
+        "</table>"
+    )
 
 
 def _center(value: str, width: int) -> str:

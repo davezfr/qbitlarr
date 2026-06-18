@@ -24,11 +24,14 @@ from app.domain.quality import (
     normalize_user_message,
     parse_quality,
 )
-from app.domain.choice_table import render_choice_table
+from app.domain.choice_table import render_choice_rich_html, render_choice_table
 from app.domain.save_paths import default_save_path_for_title, validate_save_path_override
 from app.domain.torrent_metadata import parse_torrent_name
 from app.exceptions import ConfigurationError, UpstreamServiceError
 from app.models import (
+    ChoiceButton,
+    ChoiceRichMessage,
+    ChoiceUiHints,
     HandleRequest,
     HandleResponse,
     ManualSearchResult,
@@ -51,7 +54,11 @@ from app.services.wikidata import resolve_external_movie_id, search_movie_candid
 logger = logging.getLogger("qbitlarr-api.handle")
 router = APIRouter()
 
-MANUAL_RESULT_LIMIT = 5
+DEFAULT_MANUAL_RESULT_LIMIT = 4
+MAX_MANUAL_RESULT_LIMIT = 10
+MANUAL_RESULT_LIMIT = DEFAULT_MANUAL_RESULT_LIMIT
+DEFAULT_CHOICE_STYLE = "hermes-default"
+CHOICE_STYLES = {"hermes-default", "telegram-rich"}
 MANUAL_RESULTS_MESSAGE = "Here are the top results, please reply with the number:"
 AUTO_FALLBACK_MESSAGE = "No suitable auto-download found. Here are the top results, please reply with the number:"
 DEFAULT_SEARCH_CATEGORIES = [2040, 5040]
@@ -345,6 +352,8 @@ async def _handle_imdb_request(
             snapshot_status="primary_ready" if primary_ranked else "not_found",
             preferences=preferences,
             compact_labels=True,
+            manual_result_limit=_manual_result_limit(settings),
+            choice_style=_choice_style(settings),
         )
 
     if not selected:
@@ -391,6 +400,8 @@ async def _handle_imdb_request(
             snapshot_status=snapshot_status,
             preferences=preferences,
             compact_labels=True,
+            manual_result_limit=_manual_result_limit(settings),
+            choice_style=_choice_style(settings),
         )
 
     if not fallback_searched:
@@ -503,8 +514,24 @@ def _preferences(settings: Settings) -> QualityPreferences:
 def _resolve_mode(request_mode: str | None, settings: Settings) -> str:
     if request_mode:
         return request_mode
-    default = getattr(settings, "default_mode", "auto") or "auto"
-    return default if default in ("auto", "manual", "confirm") else "auto"
+    default = getattr(settings, "default_mode", "manual") or "manual"
+    return default if default in ("auto", "manual", "confirm") else "manual"
+
+
+def _manual_result_limit(settings: Settings) -> int:
+    value = getattr(settings, "manual_result_limit", DEFAULT_MANUAL_RESULT_LIMIT)
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_MANUAL_RESULT_LIMIT
+    if limit < 1:
+        return DEFAULT_MANUAL_RESULT_LIMIT
+    return min(limit, MAX_MANUAL_RESULT_LIMIT)
+
+
+def _choice_style(settings: Settings) -> str:
+    style = str(getattr(settings, "choice_style", DEFAULT_CHOICE_STYLE) or DEFAULT_CHOICE_STYLE).strip().lower()
+    return style if style in CHOICE_STYLES else DEFAULT_CHOICE_STYLE
 
 
 def _to_manual_results(
@@ -661,7 +688,8 @@ async def _find_existing_download_for_results(
     prefer_premium: bool,
     requested_resolution: str | None,
 ) -> TorrentStatus | None:
-    title_keys = {_title_match_key(clean_display_title(result.title)) for result in results[:MANUAL_RESULT_LIMIT]}
+    result_limit = _manual_result_limit(settings)
+    title_keys = {_title_match_key(clean_display_title(result.title)) for result in results[:result_limit]}
     title_keys.discard("")
     if not title_keys:
         return None
@@ -822,6 +850,8 @@ def _manual_results_response(
     snapshot_status: str | None = None,
     preferences: QualityPreferences = DEFAULT_QUALITY_PREFERENCES,
     compact_labels: bool = False,
+    manual_result_limit: int = DEFAULT_MANUAL_RESULT_LIMIT,
+    choice_style: str = DEFAULT_CHOICE_STYLE,
 ) -> HandleResponse:
     ranked_results = _rank_results(
         results,
@@ -831,15 +861,54 @@ def _manual_results_response(
         require_min_seeders=False,
         preferences=preferences,
     )
-    manual_results = _to_manual_results(ranked_results, compact_labels=compact_labels)
+    manual_results = _to_manual_results(
+        ranked_results,
+        compact_labels=compact_labels,
+        limit=manual_result_limit,
+    )
+    choices_table = render_choice_table(manual_results) if compact_labels and manual_results else None
     return HandleResponse(
         status=status,
         action="show_results",
         message=message,
-        choices_table=render_choice_table(manual_results) if compact_labels and manual_results else None,
+        choices_table=choices_table,
+        choice_display=_choice_display(message, choices_table),
+        choice_buttons=_choice_buttons(manual_results) if manual_results else None,
+        ui_hints=_choice_ui_hints(choice_style) if manual_results else None,
+        choice_rich_message=_choice_rich_message(message, manual_results) if manual_results else None,
         query_id=query_id,
         snapshot_status=snapshot_status,
         results=manual_results,
+    )
+
+
+def _choice_display(message: str, choices_table: str | None) -> str | None:
+    if not choices_table:
+        return None
+    return f"{message}\n\n```text\n{choices_table}\n```"
+
+
+def _choice_buttons(results: list[ManualSearchResult]) -> list[ChoiceButton]:
+    return [
+        ChoiceButton(index=result.index, text=str(result.index), value=str(result.index))
+        for result in results
+    ]
+
+
+def _choice_rich_message(message: str, results: list[ManualSearchResult]) -> ChoiceRichMessage:
+    return ChoiceRichMessage(
+        format="telegram-html",
+        html=render_choice_rich_html(message, results),
+        skip_entity_detection=True,
+    )
+
+
+def _choice_ui_hints(choice_style: str) -> ChoiceUiHints:
+    normalized = choice_style if choice_style in CHOICE_STYLES else DEFAULT_CHOICE_STYLE
+    return ChoiceUiHints(
+        choice_style=normalized,
+        recommended_button_layout="inline-row" if normalized == "telegram-rich" else "vertical",
+        closed_choice=True,
     )
 
 

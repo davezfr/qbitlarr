@@ -57,12 +57,19 @@ def create_mcp_server() -> FastMCP:
 
         Branch on the response "action":
           - "show_results": ranked release choices for one identified title.
-            Present them and download the user's pick. A "choices_table"
-            (pre-aligned monospace text) is included — send it verbatim via
-            clarify with choices_display=choices_table and recommended_index=1,
-            passing each result's "label" field as the choices array. Never
-            re-format the table, and do not append "quality" to the label (it is
-            already in the table).
+            Present them and download the user's pick. Telegram adapters that
+            support Bot API sendRichMessage should send "choice_rich_message"
+            as rich_message, then render "choice_buttons" below it. Markdown or
+            generic rich-text hosts can use "choice_display"; plain hosts can
+            send "choices_table" verbatim inside a monospace block. For generic
+            clarify/picker tools, pass each result's "label" field as the
+            choices array. Stock Hermes-style clarify supports four choices and
+            appends its own "Other" option, so qBitlarr defaults to four release
+            choices. Custom adapters may use "choice_buttons" and "ui_hints" to
+            render a closed inline row, for example five numeric Telegram
+            buttons when QBITLARR_MANUAL_RESULT_LIMIT=5 and
+            QBITLARR_CHOICE_STYLE=telegram-rich. Never re-format the table, and
+            do not append "quality" to the label (it is already in the table).
           - "auto_download" (mode="auto" only): the best release was queued; an
             "alternatives" list of runner-ups is included so the user can be
             offered "or did you mean..." without a second call.
