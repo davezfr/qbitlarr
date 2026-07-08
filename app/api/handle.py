@@ -815,7 +815,13 @@ def _choose_title_response(
 ) -> HandleResponse:
     base_request = SearchRequest(query=user_message, categories=get_categories(user_message))
     movie_candidates = _to_movie_candidates(candidates)
-    choices_table = render_title_choice_table(movie_candidates) if movie_candidates else None
+    rendered_choices_table = render_title_choice_table(movie_candidates) if movie_candidates else None
+    choice_style = _choice_style(settings)
+    choices_table, choice_display = _choice_rendering_fields(
+        CHOOSE_TITLE_MESSAGE,
+        rendered_choices_table,
+        choice_style,
+    )
     store.create(
         query_id=query_id,
         request=_snapshot_request_payload(user_message=user_message, search_request=base_request, settings=settings),
@@ -828,9 +834,9 @@ def _choose_title_response(
         action="choose_title",
         message=CHOOSE_TITLE_MESSAGE,
         choices_table=choices_table,
-        choice_display=_choice_display(CHOOSE_TITLE_MESSAGE, choices_table),
+        choice_display=choice_display,
         choice_buttons=_candidate_choice_buttons(movie_candidates) if movie_candidates else None,
-        ui_hints=_choice_ui_hints(_choice_style(settings)) if movie_candidates else None,
+        ui_hints=_choice_ui_hints(choice_style) if movie_candidates else None,
         choice_rich_message=_title_choice_rich_message(CHOOSE_TITLE_MESSAGE, movie_candidates) if movie_candidates else None,
         query_id=query_id,
         snapshot_status="title_candidates",
@@ -878,13 +884,18 @@ def _manual_results_response(
         compact_labels=compact_labels,
         limit=manual_result_limit,
     )
-    choices_table = render_choice_table(manual_results) if compact_labels and manual_results else None
+    rendered_choices_table = render_choice_table(manual_results) if compact_labels and manual_results else None
+    choices_table, choice_display = _choice_rendering_fields(
+        message,
+        rendered_choices_table,
+        choice_style,
+    )
     return HandleResponse(
         status=status,
         action="show_results",
         message=message,
         choices_table=choices_table,
-        choice_display=_choice_display(message, choices_table),
+        choice_display=choice_display,
         choice_buttons=_choice_buttons(manual_results) if manual_results else None,
         ui_hints=_choice_ui_hints(choice_style) if manual_results else None,
         choice_rich_message=_choice_rich_message(message, manual_results) if manual_results else None,
@@ -894,9 +905,24 @@ def _manual_results_response(
     )
 
 
-def _choice_display(message: str, choices_table: str | None) -> str | None:
+def _choice_rendering_fields(
+    message: str,
+    choices_table: str | None,
+    choice_style: str,
+) -> tuple[str | None, str | None]:
     if not choices_table:
-        return None
+        return None, None
+    normalized = choice_style if choice_style in CHOICE_STYLES else DEFAULT_CHOICE_STYLE
+    if normalized == "telegram-rich":
+        return None, _choice_plain_display(message, choices_table)
+    return choices_table, _choice_markdown_display(message, choices_table)
+
+
+def _choice_plain_display(message: str, choices_table: str) -> str:
+    return f"{message}\n\n{choices_table}"
+
+
+def _choice_markdown_display(message: str, choices_table: str) -> str:
     return f"{message}\n\n```text\n{choices_table}\n```"
 
 

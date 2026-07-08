@@ -1221,7 +1221,17 @@ def test_handle_imdb_show_results_can_return_five_choices_for_custom_telegram_ri
         "recommended_button_layout": "inline-row",
         "closed_choice": True,
     }
-    assert len(payload["choices_table"].splitlines()) == 5
+    assert payload["choices_table"] is None
+    assert payload["choice_display"].startswith("Here are the top results")
+    assert "```text" not in payload["choice_display"]
+    assert "1. 1." not in payload["choice_display"]
+    assert len(
+        [
+            line
+            for line in payload["choice_display"].splitlines()
+            if line.startswith(("1.", "2.", "3.", "4.", "5."))
+        ]
+    ) == 5
 
 
 def test_handle_imdb_show_results_includes_telegram_rich_table_without_links(monkeypatch, tmp_path):
@@ -1245,6 +1255,8 @@ def test_handle_imdb_show_results_includes_telegram_rich_table_without_links(mon
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["choices_table"] is None
+    assert "```text" not in payload["choice_display"]
     rich_message = payload["choice_rich_message"]
     assert rich_message["format"] == "telegram-html"
     assert rich_message["skip_entity_detection"] is True
@@ -1259,6 +1271,42 @@ def test_handle_imdb_show_results_includes_telegram_rich_table_without_links(mon
     assert "REMUX" in html
     assert "https://example.test" not in html
     assert "<pre>" not in html
+
+
+def test_handle_keyword_choose_title_telegram_rich_omits_raw_table_and_markdown(monkeypatch, tmp_path):
+    async def fake_candidates(query, settings, *, limit=5):
+        return [
+            _candidate("Parasite", imdb_id="tt6751668", year=2019),
+            _candidate("Parasite", imdb_id="tt0084472", year=1982),
+        ]
+
+    settings = _settings_with_prefs(
+        tmp_path,
+        default_mode="manual",
+        choice_style="telegram-rich",
+    )
+    monkeypatch.setattr("app.api.handle.search_movie_candidates", fake_candidates)
+    monkeypatch.setattr("app.api.handle.get_settings", lambda: settings)
+
+    client = TestClient(app)
+    response = client.post("/handle", json={"user_message": "Parasite"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["action"] == "choose_title"
+    assert payload["choices_table"] is None
+    assert payload["choice_display"] == (
+        "I found a few possible matches. Reply with the number of the title you mean:\n\n"
+        "1. Parasite (2019)\n"
+        "2. Parasite (1982)"
+    )
+    assert "```text" not in payload["choice_display"]
+    assert "1. 1." not in payload["choice_display"]
+    assert payload["ui_hints"] == {
+        "choice_style": "telegram-rich",
+        "recommended_button_layout": "inline-row",
+        "closed_choice": True,
+    }
 
 
 def test_handle_keyword_choose_title_uses_title_choice_table(monkeypatch, tmp_path):

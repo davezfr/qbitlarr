@@ -8,6 +8,8 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from app.client import get_qbitlarr_client
+from app.domain.choice_table import render_choice_table, render_title_choice_table
+from app.models import ManualSearchResult, MovieCandidate
 from mcp_server.notifications import DownloadCompletionNotifier
 
 
@@ -57,32 +59,27 @@ def create_mcp_server() -> FastMCP:
 
         Branch on the response "action":
           - "show_results": ranked release choices for one identified title.
-            Present them and download the user's pick. Telegram adapters that
-            support Bot API sendRichMessage should send "choice_rich_message"
-            as rich_message, then render "choice_buttons" below it. Markdown or
-            generic rich-text hosts can use "choice_display"; plain hosts can
-            send "choices_table" verbatim inside a monospace block. For generic
-            clarify/picker tools, pass each result's "label" field as the
-            choices array. Stock Hermes-style clarify supports four choices and
-            appends its own "Other" option, so qBitlarr defaults to four release
-            choices. Custom adapters may use "choice_buttons" and "ui_hints" to
-            render a closed inline row, for example five numeric Telegram
-            buttons when QBITLARR_MANUAL_RESULT_LIMIT=5 and
-            QBITLARR_CHOICE_STYLE=telegram-rich. Never re-format the table, and
-            do not append "quality" to the label (it is already in the table).
+            Present them and download the user's pick. The MCP tool returns
+            "agent_clarify" for this action. When it is present, ask an
+            open-ended clarify question that includes agent_clarify.display_table
+            in a monospace/code block, and pass agent_clarify.choices as the
+            short numeric button labels. Use agent_clarify.response_mapping to
+            map the selected number back to a result index, then queue that
+            result. Do not pass table rows as clarify choices or append another
+            numbered list.
           - "auto_download" (mode="auto" only): the best release was queued; an
             "alternatives" list of runner-ups is included so the user can be
             offered "or did you mean..." without a second call.
           - "confirm" (mode="confirm"): the top pick plus alternatives, nothing
             queued.
           - "choose_title": a keyword matched several titles. The "candidates"
-            list holds {index, title, year, imdb_id, label}. If present, render
-            "choice_rich_message", "choice_display", or "choices_table" the same
-            way as release choices so the title-picking step visually matches the
-            release-picking step. For generic clarify/picker tools, pass each
-            candidate "label" field as the choices array. After the user picks
-            a title, call qbitlarr_handle again with the chosen candidate's
-            imdb_id to get its release choices.
+            list holds {index, title, year, imdb_id, label}. If
+            "agent_clarify" is present, ask an open-ended clarify question with
+            agent_clarify.display_table in a monospace/code block, pass
+            agent_clarify.choices as short numeric button labels, and use
+            agent_clarify.response_mapping to find the
+            candidate index. After the user picks a title, call qbitlarr_handle
+            again with the chosen candidate's imdb_id to get its release choices.
           - "needs_imdb": no title could be identified (an unresolved link or a
             keyword with no match). Relay the message and ask the user to send
             an IMDb link or ID.
@@ -128,7 +125,7 @@ def create_mcp_server() -> FastMCP:
             requester_id=user_id,
             completion_followup_message=completion_followup_message,
         )
-        return payload
+        return _prepare_agent_handle_payload(payload)
 
     @mcp.tool()
     async def qbitlarr_get_query_snapshot(query_id: str) -> dict[str, Any]:
@@ -449,6 +446,124 @@ def _string_value(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+_RAW_CHOICE_RENDER_FIELDS = {
+    "choices_table",
+    "choice_display",
+    "choice_buttons",
+    "choice_rich_message",
+    "ui_hints",
+}
+
+_AGENT_CLARIFY_MAX_ROWS = 4
+
+
+def _prepare_agent_handle_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Reduce picker payloads to fields a model can safely pass to clarify."""
+    action = payload.get("action")
+    if action not in {"show_results", "choose_title"}:
+        return payload
+
+    agent_payload = dict(payload)
+    for field in _RAW_CHOICE_RENDER_FIELDS:
+        agent_payload.pop(field, None)
+
+    clarify_payload = _agent_clarify_payload(payload)
+    if clarify_payload:
+        agent_payload["agent_clarify"] = clarify_payload
+    return agent_payload
+
+
+def _agent_clarify_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    action = payload.get("action")
+    if action == "show_results":
+        display_table, response_mapping = _release_clarify_display(payload.get("results"))
+        question = "Choose a version to download:"
+    elif action == "choose_title":
+        display_table, response_mapping = _title_clarify_display(payload.get("candidates"))
+        question = "Choose a title:"
+    else:
+        return None
+
+    if not display_table or not response_mapping:
+        return None
+    return {
+        "question": question,
+        "display_table": display_table,
+        "choices": [str(item["choice"]) for item in response_mapping],
+        "response_mapping": response_mapping,
+    }
+
+
+def _release_clarify_display(results: Any) -> tuple[str | None, list[dict[str, Any]]]:
+    manual_results: list[ManualSearchResult] = []
+    response_mapping: list[dict[str, Any]] = []
+    if not isinstance(results, list):
+        return None, response_mapping
+
+    for fallback_index, result in enumerate(results, start=1):
+        if not isinstance(result, dict):
+            continue
+        index = result.get("index") if isinstance(result.get("index"), int) else fallback_index
+        title = _string_value(result.get("title")) or _string_value(result.get("label"))
+        if not title:
+            continue
+        manual_results.append(
+            ManualSearchResult(
+                index=index,
+                title=title,
+                quality=_string_value(result.get("quality")) or "",
+                seeders=result.get("seeders") if isinstance(result.get("seeders"), int) else None,
+                size=result.get("size") if isinstance(result.get("size"), int) else None,
+                download_link=_string_value(result.get("download_link")) or "",
+                label=_string_value(result.get("label")),
+            )
+        )
+        response_mapping.append(_agent_clarify_mapping(index))
+        if len(manual_results) >= _AGENT_CLARIFY_MAX_ROWS:
+            break
+
+    if not manual_results:
+        return None, response_mapping
+    return render_choice_table(manual_results), response_mapping
+
+
+def _title_clarify_display(candidates: Any) -> tuple[str | None, list[dict[str, Any]]]:
+    movie_candidates: list[MovieCandidate] = []
+    response_mapping: list[dict[str, Any]] = []
+    if not isinstance(candidates, list):
+        return None, response_mapping
+
+    for fallback_index, candidate in enumerate(candidates, start=1):
+        if not isinstance(candidate, dict):
+            continue
+        index = candidate.get("index") if isinstance(candidate.get("index"), int) else fallback_index
+        label = _string_value(candidate.get("label")) or _string_value(candidate.get("title"))
+        title = _string_value(candidate.get("title")) or label
+        if not label:
+            continue
+        movie_candidates.append(
+            MovieCandidate(
+                index=index,
+                title=title or label,
+                year=candidate.get("year") if isinstance(candidate.get("year"), int) else None,
+                imdb_id=_string_value(candidate.get("imdb_id")) or "",
+                label=label,
+            )
+        )
+        response_mapping.append(_agent_clarify_mapping(index))
+        if len(movie_candidates) >= _AGENT_CLARIFY_MAX_ROWS:
+            break
+
+    if not movie_candidates:
+        return None, response_mapping
+    return render_title_choice_table(movie_candidates), response_mapping
+
+
+def _agent_clarify_mapping(index: int) -> dict[str, Any]:
+    response = str(index)
+    return {"choice": response, "response": response, "index": index}
 
 
 def _completion_metadata_from_payload(

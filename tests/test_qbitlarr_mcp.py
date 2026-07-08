@@ -5,6 +5,124 @@ import httpx
 import pytest
 
 from app.client import QbitlarrApiClient, QbitlarrApiError, get_qbitlarr_client
+from mcp_server.server import _prepare_agent_handle_payload
+
+
+def test_agent_handle_payload_for_release_choices_uses_clarify_safe_fields():
+    payload = {
+        "status": "success",
+        "action": "show_results",
+        "message": "Here are the top results, please reply with the number:",
+        "choices_table": "1.  WEBRip  H.265  🧲 3635  💾 1.8GB",
+        "choice_display": "Here are the top results\n\n```text\n1.  WEBRip  H.265  🧲 3635  💾 1.8GB\n```",
+        "choice_buttons": [{"index": 1, "text": "1", "value": "1"}],
+        "choice_rich_message": {"format": "telegram-html", "html": "<table></table>"},
+        "query_id": "query-123",
+        "results": [
+            {
+                "index": 1,
+                "title": "Example.2026.1080p.WEBRip.H.265-GRP",
+                "quality": "1080p WEBRip H.265",
+                "label": "WEBRip H.265",
+                "seeders": 3635,
+                "size": 1_800_000_000,
+                "download_link": "https://example.test/1.torrent",
+            },
+            {
+                "index": 2,
+                "title": "Example.2026.1080p.WEBRip.H.265-GRP",
+                "quality": "1080p WEBRip",
+                "label": "WEBRip",
+                "seeders": 1100,
+                "size": 2_300_000_000,
+                "download_link": "https://example.test/2.torrent",
+            },
+        ],
+    }
+
+    agent_payload = _prepare_agent_handle_payload(payload)
+
+    assert "choices_table" not in agent_payload
+    assert "choice_display" not in agent_payload
+    assert "choice_buttons" not in agent_payload
+    assert "choice_rich_message" not in agent_payload
+    assert agent_payload["agent_clarify"] == {
+        "question": "Choose a version to download:",
+        "display_table": (
+            "1.  WEBRip  H.265  🧲 3635  💾 1.8GB\n"
+            "2.  WEBRip  H.265  🧲 1100  💾 2.3GB"
+        ),
+        "choices": ["1", "2"],
+        "response_mapping": [
+            {"choice": "1", "response": "1", "index": 1},
+            {"choice": "2", "response": "2", "index": 2},
+        ],
+    }
+
+
+def test_agent_handle_payload_caps_release_table_for_hermes_clarify():
+    payload = {
+        "status": "success",
+        "action": "show_results",
+        "message": "Here are the top results, please reply with the number:",
+        "results": [
+            {
+                "index": index,
+                "title": f"Example.2026.1080p.BluRay.H.264-GRP{index}",
+                "quality": "1080p BluRay H.264",
+                "label": "BluRay H.264",
+                "seeders": index,
+                "size": index * 1_000_000_000,
+                "download_link": f"https://example.test/{index}.torrent",
+            }
+            for index in range(1, 6)
+        ],
+    }
+
+    agent_payload = _prepare_agent_handle_payload(payload)
+
+    display_table = agent_payload["agent_clarify"]["display_table"]
+    assert "4." in display_table
+    assert "5." not in display_table
+    assert agent_payload["agent_clarify"]["choices"] == ["1", "2", "3", "4"]
+    assert agent_payload["agent_clarify"]["response_mapping"] == [
+        {"choice": "1", "response": "1", "index": 1},
+        {"choice": "2", "response": "2", "index": 2},
+        {"choice": "3", "response": "3", "index": 3},
+        {"choice": "4", "response": "4", "index": 4},
+    ]
+
+
+def test_agent_handle_payload_for_title_choices_uses_label_only_choices():
+    payload = {
+        "status": "success",
+        "action": "choose_title",
+        "message": "I found a few possible matches. Reply with the number of the title you mean:",
+        "choices_table": "1. Parasite (2019)\n2. Parasite (1982)",
+        "choice_display": "I found a few possible matches.\n\n```text\n1. Parasite (2019)\n```",
+        "choice_buttons": [{"index": 1, "text": "1", "value": "1"}],
+        "choice_rich_message": {"format": "telegram-html", "html": "<table></table>"},
+        "candidates": [
+            {"index": 1, "title": "Parasite", "year": 2019, "imdb_id": "tt6751668", "label": "Parasite (2019)"},
+            {"index": 2, "title": "Parasite", "year": 1982, "imdb_id": "tt0084472", "label": "Parasite (1982)"},
+        ],
+    }
+
+    agent_payload = _prepare_agent_handle_payload(payload)
+
+    assert "choices_table" not in agent_payload
+    assert "choice_display" not in agent_payload
+    assert "choice_buttons" not in agent_payload
+    assert "choice_rich_message" not in agent_payload
+    assert agent_payload["agent_clarify"] == {
+        "question": "Choose a title:",
+        "display_table": "1. Parasite (2019)\n2. Parasite (1982)",
+        "choices": ["1", "2"],
+        "response_mapping": [
+            {"choice": "1", "response": "1", "index": 1},
+            {"choice": "2", "response": "2", "index": 2},
+        ],
+    }
 
 
 def test_qbitlarr_api_client_search_posts_expected_payload():

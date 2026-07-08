@@ -229,14 +229,14 @@ Wikidata 关键词匹配是有意保持轻量的，所以冷门标题可能无�
 
 可以通过 `QBITLARR_DEFAULT_MODE=manual|auto|confirm` 修改服务默认模式。
 
-电影选择（`choose_title`）和发布版本选择（`show_results`）的展示都是 transport-neutral 的。响应里会包含适合普通 clarify/picker 工具的紧凑 `label`，也会包含给更强聊天适配层使用的 `choices_table`、`choice_display`、`choice_rich_message`、`choice_buttons` 和 `ui_hints`。`choice_rich_message` 是面向 Telegram Bot API 10.1 的 rich HTML；adapter 可以把它的 `html` 作为 `sendRichMessage.rich_message.html`，并在下面渲染 `choice_buttons`。发布版本的零配置默认值面向 stock Hermes：`QBITLARR_MANUAL_RESULT_LIMIT=4` 和 `QBITLARR_CHOICE_STYLE=hermes-default`，匹配 Hermes 风格 clarify 默认展示 4 个选择并自动追加 "Other" 的行为。如果你的本地 Telegram/Hermes adapter 可以渲染 rich table 加一排 5 个封闭按钮，可以设置：
+电影选择（`choose_title`）和发布版本选择（`show_results`）的展示都是 transport-neutral 的。REST 响应里会包含适合普通 clarify/picker 工具的紧凑 `label`，也会包含给更强聊天适配层使用的结构化选择字段。`choice_rich_message` 是面向 Telegram Bot API 10.1 的 rich HTML；adapter 可以把它的 `html` 作为 `sendRichMessage.rich_message.html`，并在下面渲染 `choice_buttons`。如果不能发送 rich message，就只发送完整的 `choice_display`，不要再追加 `choices_table`、`results` 或 `label`。MCP wrapper 会改为返回面向 agent 的 `agent_clarify` 对象：Hermes 风格流程应该把 `agent_clarify.display_table` 放进 fenced text/code block，把 `agent_clarify.choices` 作为短数字按钮标签传入，再用用户选择的数字通过 `agent_clarify.response_mapping` 映射结果。发布版本的零配置默认值面向 stock Hermes：`QBITLARR_MANUAL_RESULT_LIMIT=4` 和 `QBITLARR_CHOICE_STYLE=hermes-default`，匹配 Hermes 风格 clarify 展示 4 行且不会泄漏重复编号列表的行为。如果你的本地 Telegram/Hermes adapter 可以渲染 rich table 加一排 5 个封闭按钮，可以设置：
 
 ```sh
 QBITLARR_MANUAL_RESULT_LIMIT=5
 QBITLARR_CHOICE_STYLE=telegram-rich
 ```
 
-这只改变 qBitlarr 返回的结构化响应；真正的横排按钮布局仍然属于你的本地聊天适配层或 Hermes profile。
+这只改变 qBitlarr 返回的结构化响应；真正的横排按钮布局仍然属于你的本地聊天适配层或 Hermes profile。在 `telegram-rich` 模式下，qBitlarr 会省略 raw `choices_table`，并返回没有 Markdown fence 的纯文本 `choice_display` fallback，避免 Telegram bot 显示反引号代码块或重复编号列表。
 
 ## 已完成任务清理
 
@@ -322,7 +322,7 @@ stdio MCP wrapper 还可以向 Hermes 风格目标发送 **一次性完成通知
 - **Stdio 方式**：让 host 把 `bin/qbitlarr-mcp` 作为子进程启动（通过环境变量传 API URL 和可选的 API key）。
 - **HTTP 方式**：把 host 指向 `http://localhost:8000/mcp`，如果设了 API key 就加上 `X-API-Key` header。
 
-对于 `choose_title` 和 `show_results`，支持 Bot API `sendRichMessage` 的 Telegram adapter 应该优先渲染 `choice_rich_message`，并把 `choice_buttons` 放在下面。其它 rich-text host 可以渲染 `choice_display`；纯文本 host 可以把 `choices_table` 放进 monospace block。普通 clarify/picker host 应该把每个候选电影或结果的 `label` 作为选择列表。
+对于 `choose_title` 和 `show_results`，MCP host 应该发一个 picker 问题，把 `agent_clarify.display_table` 放进 monospace block，把 `agent_clarify.choices` 作为短数字按钮标签传入，再用用户选择的数字通过 `agent_clarify.response_mapping` 映射结果。直接调用 REST 的 Telegram adapter 如果支持 Bot API `sendRichMessage`，应该优先渲染 `choice_rich_message`，并把 `choice_buttons` 放在下面。如果做不到，就只发送 `choice_display`。使用默认 `hermes-default` REST 响应的纯文本 host 可以把 `choices_table` 放进 monospace block。
 
 ### 告诉 Agent 什么时候用 qBitlarr
 

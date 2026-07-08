@@ -282,14 +282,18 @@ class HandleResponse(BaseModel):
         description=(
             "Pre-rendered monospace choice table for release choices or title "
             "candidates. Send verbatim inside a monospace block; do not re-format. "
-            "Recommendation, if any, should be conveyed by the surrounding UI."
+            "Recommendation, if any, should be conveyed by the surrounding UI. "
+            "Omitted for telegram-rich responses so adapters do not render the "
+            "same numbered list twice."
         ),
     )
     choice_display: str | None = Field(
         default=None,
         description=(
-            "Complete formatted choice message for chat surfaces that can render Markdown "
-            "or rich text. It includes the message plus a monospace choice table."
+            "Complete formatted choice message. Send this field alone as the text "
+            "fallback; do not append choices_table, results, or labels to it. "
+            "hermes-default uses a Markdown fenced table, while telegram-rich uses "
+            "plain text without Markdown fences."
         ),
     )
     choice_buttons: list[ChoiceButton] | None = Field(

@@ -229,14 +229,14 @@ Wikidata keyword matching is intentionally lightweight, so obscure titles may no
 
 Override the server-wide default with `QBITLARR_DEFAULT_MODE=manual|auto|confirm`.
 
-Choice display is transport-neutral for both title disambiguation (`choose_title`) and release picking (`show_results`). The response includes compact `label` values for generic clarify/picker tools, plus `choices_table`, `choice_display`, `choice_rich_message`, `choice_buttons`, and `ui_hints` for richer chat adapters. `choice_rich_message` is Telegram Bot API 10.1-friendly rich HTML: adapters can pass its `html` value as `sendRichMessage.rich_message.html` and render `choice_buttons` below it. The zero-config release default is stock Hermes-friendly: `QBITLARR_MANUAL_RESULT_LIMIT=4` and `QBITLARR_CHOICE_STYLE=hermes-default`, matching Hermes-style clarify surfaces that show four choices and add their own "Other" option. If your local Telegram/Hermes adapter can render a rich table plus a closed row of five buttons, set:
+Choice display is transport-neutral for both title disambiguation (`choose_title`) and release picking (`show_results`). The REST response includes compact `label` values for generic clarify/picker tools, plus rendered choice fields for richer chat adapters. `choice_rich_message` is Telegram Bot API 10.1-friendly rich HTML: adapters can pass its `html` value as `sendRichMessage.rich_message.html` and render `choice_buttons` below it. If rich messages are unavailable, send `choice_display` by itself and do not append `choices_table`, `results`, or `label` values. The MCP wrapper returns an agent-facing `agent_clarify` object instead: Hermes-style flows should put `agent_clarify.display_table` in a fenced text/code block, pass `agent_clarify.choices` as short numeric button labels, and map the selected number through `agent_clarify.response_mapping`. The zero-config release default is stock Hermes-friendly: `QBITLARR_MANUAL_RESULT_LIMIT=4` and `QBITLARR_CHOICE_STYLE=hermes-default`, matching Hermes-style clarify surfaces that show four rows without leaking duplicate numbered lists. If your local Telegram/Hermes adapter can render a rich table plus a closed row of five buttons, set:
 
 ```sh
 QBITLARR_MANUAL_RESULT_LIMIT=5
 QBITLARR_CHOICE_STYLE=telegram-rich
 ```
 
-That changes qBitlarr's structured response only; the actual horizontal button layout still belongs in your local chat adapter or Hermes profile.
+That changes qBitlarr's structured response only; the actual horizontal button layout still belongs in your local chat adapter or Hermes profile. In `telegram-rich` mode, qBitlarr omits raw `choices_table` from the response and returns a plain-text `choice_display` fallback so Telegram bots do not show Markdown fences or duplicate numbered lists.
 
 ## Completed Task Cleanup
 
@@ -322,7 +322,7 @@ The pattern is the same — they all support one or both transports:
 - **Stdio path**: configure the host to launch `bin/qbitlarr-mcp` as a subprocess (with env vars for the API URL and optional API key).
 - **HTTP path**: point the host at `http://localhost:8000/mcp` with the `X-API-Key` header if you set one.
 
-For `choose_title` and `show_results`, Telegram adapters that support Bot API `sendRichMessage` should render `choice_rich_message` first and place `choice_buttons` below it. Other rich-text hosts can render `choice_display`; plain hosts can render `choices_table` inside a monospace block. Generic clarify/picker hosts should pass each candidate or result `label` as the choice list.
+For `choose_title` and `show_results`, MCP hosts should ask a picker question with `agent_clarify.display_table` inside a monospace block, pass `agent_clarify.choices` as short numeric button labels, and map the selected number through `agent_clarify.response_mapping`. Direct REST Telegram adapters that support Bot API `sendRichMessage` should render `choice_rich_message` first and place `choice_buttons` below it. If that is not available, send `choice_display` alone. Plain REST hosts using the default `hermes-default` response can render `choices_table` inside a monospace block.
 
 ### Tell your agent when to use qBitlarr
 
