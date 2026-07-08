@@ -56,6 +56,7 @@ class Settings:
     cleanup_completed_after_seconds: int = 259_200
     cleanup_interval_seconds: int = 21_600
     cleanup_include_legacy_requester_tags: bool = True
+    query_snapshot_retention_seconds: int = 604_800
 
     @property
     def quality_preferences(self) -> QualityPreferences:
@@ -107,6 +108,11 @@ class Settings:
             cleanup_interval_seconds=_optional_int_env("QBITLARR_CLEANUP_INTERVAL_SECONDS", default=21_600)
             or 21_600,
             cleanup_include_legacy_requester_tags=_env_bool("QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS", True),
+            query_snapshot_retention_seconds=_optional_int_env(
+                "QBITLARR_QUERY_SNAPSHOT_RETENTION_SECONDS",
+                default=604_800,
+            )
+            or 604_800,
         )
 
 

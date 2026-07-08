@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 from types import SimpleNamespace
 
@@ -77,9 +78,13 @@ class FakeQbittorrentClient:
 
     def torrents_pause(self, *, torrent_hashes=None, **kwargs):
         self.pause_calls.append({"torrent_hashes": torrent_hashes})
+        if torrent_hashes:
+            self.torrent_overrides_by_hash.setdefault(str(torrent_hashes).casefold(), {})["state"] = "pausedDL"
 
     def torrents_resume(self, *, torrent_hashes=None, **kwargs):
         self.resume_calls.append({"torrent_hashes": torrent_hashes})
+        if torrent_hashes:
+            self.torrent_overrides_by_hash.setdefault(str(torrent_hashes).casefold(), {})["state"] = "downloading"
 
     def torrents_delete(self, *, delete_files=None, torrent_hashes=None, **kwargs):
         self.delete_calls.append({"delete_files": delete_files, "torrent_hashes": torrent_hashes})
@@ -228,6 +233,20 @@ def test_add_download_passes_magnets_as_urls(monkeypatch):
             "save_path": None,
         }
     ]
+
+
+def test_add_download_detects_existing_base32_magnet_hash(monkeypatch):
+    _reset_fakes()
+    base32_hash = base64.b32encode(bytes.fromhex(INFO_HASH)).decode("ascii").rstrip("=")
+    FakeQbittorrentClient.existing_hashes = [INFO_HASH]
+    monkeypatch.setattr("app.services.qbittorrent.qbittorrentapi.Client", FakeQbittorrentClient)
+    monkeypatch.setattr("app.services.qbittorrent.httpx.AsyncClient", FakeAsyncClient)
+
+    status = asyncio.run(add_download_to_qbittorrent(f"magnet:?xt=urn:btih:{base32_hash}", _settings()))
+
+    assert status is not None
+    assert status.hash == INFO_HASH
+    assert FakeQbittorrentClient.calls == []
 
 
 def test_add_download_skips_qbittorrent_add_when_torrent_already_exists(monkeypatch):
@@ -508,6 +527,7 @@ def test_pause_download_requires_matching_requester_tag(monkeypatch):
     )
 
     assert status.hash == INFO_HASH
+    assert status.state == "pausedDL"
     assert FakeQbittorrentClient.pause_calls == [{"torrent_hashes": INFO_HASH}]
 
 
@@ -519,6 +539,10 @@ def test_resume_download_requires_matching_requester_tag(monkeypatch):
     }
     monkeypatch.setattr("app.services.qbittorrent.qbittorrentapi.Client", FakeQbittorrentClient)
 
+    FakeQbittorrentClient.torrent_overrides_by_hash = {
+        INFO_HASH: {"state": "pausedDL"},
+    }
+
     status = asyncio.run(
         resume_download_in_qbittorrent(
             _settings(),
@@ -528,6 +552,7 @@ def test_resume_download_requires_matching_requester_tag(monkeypatch):
     )
 
     assert status.hash == INFO_HASH
+    assert status.state == "downloading"
     assert FakeQbittorrentClient.resume_calls == [{"torrent_hashes": INFO_HASH}]
 
 

@@ -229,7 +229,7 @@ Wikidata 关键词匹配是有意保持轻量的，所以冷门标题可能无�
 
 可以通过 `QBITLARR_DEFAULT_MODE=manual|auto|confirm` 修改服务默认模式。
 
-电影选择（`choose_title`）和发布版本选择（`show_results`）的展示都是 transport-neutral 的。REST 响应里会包含适合普通 clarify/picker 工具的紧凑 `label`，也会包含给更强聊天适配层使用的结构化选择字段。`choice_rich_message` 是面向 Telegram Bot API 10.1 的 rich HTML；adapter 可以把它的 `html` 作为 `sendRichMessage.rich_message.html`，并在下面渲染 `choice_buttons`。如果不能发送 rich message，就只发送完整的 `choice_display`，不要再追加 `choices_table`、`results` 或 `label`。MCP wrapper 会改为返回面向 agent 的 `agent_clarify` 对象：Hermes 风格流程应该把 `agent_clarify.display_table` 放进 fenced text/code block，把 `agent_clarify.choices` 作为短数字按钮标签传入，再用用户选择的数字通过 `agent_clarify.response_mapping` 映射结果。发布版本的零配置默认值面向 stock Hermes：`QBITLARR_MANUAL_RESULT_LIMIT=4` 和 `QBITLARR_CHOICE_STYLE=hermes-default`，匹配 Hermes 风格 clarify 展示 4 行且不会泄漏重复编号列表的行为。如果你的本地 Telegram/Hermes adapter 可以渲染 rich table 加一排 5 个封闭按钮，可以设置：
+电影选择（`choose_title`）和发布版本选择（`show_results`）的展示都是 transport-neutral 的。REST 响应里会包含适合普通 clarify/picker 工具的紧凑 `label`，也会包含给更强聊天适配层使用的结构化选择字段。`choice_rich_message` 是面向 Telegram Bot API 10.1 的 rich HTML；adapter 可以把它的 `html` 作为 `sendRichMessage.rich_message.html`，并在下面渲染 `choice_buttons`。如果不能发送 rich message，就只发送完整的 `choice_display`，不要再追加 `choices_table`、`results` 或 `label`。MCP wrapper 会改为返回面向 agent 的 `agent_clarify` 对象：Hermes 风格流程应该把 `agent_clarify.display_table` 放进 fenced text/code block；如果存在 `agent_clarify.display_notice`，就把它追加到 block 后面；把 `agent_clarify.choices` 作为短数字按钮标签传入，再用用户选择的数字通过 `agent_clarify.response_mapping` 映射结果。发布版本的零配置默认值面向 stock Hermes：`QBITLARR_MANUAL_RESULT_LIMIT=4` 和 `QBITLARR_CHOICE_STYLE=hermes-default`，匹配 Hermes 风格 clarify 展示 4 行且不会泄漏重复编号列表的行为。如果你的本地 Telegram/Hermes adapter 可以渲染 rich table 加一排 5 个封闭按钮，可以设置：
 
 ```sh
 QBITLARR_MANUAL_RESULT_LIMIT=5
@@ -258,6 +258,12 @@ QBITLARR_CLEANUP_INCLUDE_LEGACY_REQUESTER_TAGS=true
 - 清理时调用 qBittorrent 的 `delete_files=false`，只删除任务，不删除媒体文件。
 - 没有 `qbitlarr.managed` 或历史 `requester.*` 标签的非 qBitlarr 任务会被忽略。
 
+手动选择结果用到的 query snapshot 会独立于 qBittorrent 任务清理被 prune。即使 `QBITLARR_CLEANUP_ENABLED=false`，维护循环也会执行 snapshot prune；默认保留 7 天，可通过下面的环境变量调整：
+
+```sh
+QBITLARR_QUERY_SNAPSHOT_RETENTION_SECONDS=604800
+```
+
 ## 接入 Agent
 
 qBitlarr 本质上是一个 **MCP 服务器**，所以任何支持 [Model Context Protocol](https://modelcontextprotocol.io) 的 Agent — Claude Desktop、Cursor、Cline、Hermes、OpenClaw、通过 MCP bridge 接入的 ChatGPT、你自己写的 Agent — 都可以调用它。
@@ -277,6 +283,7 @@ stdio MCP wrapper 还可以向 Hermes 风格目标发送 **一次性完成通知
 - 同一个 per-user `user_id` / `requester_id` 也会把状态查询限制在该用户打过标签的 torrents 内。
 - 手动流程可以用已知 hash 调用 `qbitlarr_watch_download`；传 `completion_followup_message` 可以追加一行“下一步会开始什么”（例如字幕处理）。
 - Telegram 进度编辑会依次读取 `QBITLARR_TELEGRAM_BOT_TOKEN`、`QBITLARR_HERMES_ENV_PATH`、`HERMES_HOME/.env`、`~/.hermes/.env`；如果运行多个 bot，请把 `QBITLARR_HERMES_ENV_PATH` 指到对应 profile 的 `.env`。
+- Watch 状态会优先使用 `QBITLARR_NOTIFICATION_WATCHES_PATH`；未设置时默认写到 `$XDG_DATA_HOME/qbitlarr/download-notification-watches.json`，如果没有 `XDG_DATA_HOME` 则写到 `~/.local/share/qbitlarr/download-notification-watches.json`。
 - `QBITLARR_COMPLETION_HOOK_COMMAND` 会在 watched download 完成或被删除后运行本地命令；qBitlarr 先发送用户可见消息，再把 `download_complete` / `download_removed` JSON 事件写入该命令的 stdin。Hook 失败会重试，但不会隐藏用户通知。
 
 如果设置了 `QBITLARR_API_KEY`，两种 transport 都需要 `X-API-Key` header。stdio MCP 会从同名环境变量读取。
@@ -322,7 +329,7 @@ stdio MCP wrapper 还可以向 Hermes 风格目标发送 **一次性完成通知
 - **Stdio 方式**：让 host 把 `bin/qbitlarr-mcp` 作为子进程启动（通过环境变量传 API URL 和可选的 API key）。
 - **HTTP 方式**：把 host 指向 `http://localhost:8000/mcp`，如果设了 API key 就加上 `X-API-Key` header。
 
-对于 `choose_title` 和 `show_results`，MCP host 应该发一个 picker 问题，把 `agent_clarify.display_table` 放进 monospace block，把 `agent_clarify.choices` 作为短数字按钮标签传入，再用用户选择的数字通过 `agent_clarify.response_mapping` 映射结果。直接调用 REST 的 Telegram adapter 如果支持 Bot API `sendRichMessage`，应该优先渲染 `choice_rich_message`，并把 `choice_buttons` 放在下面。如果做不到，就只发送 `choice_display`。使用默认 `hermes-default` REST 响应的纯文本 host 可以把 `choices_table` 放进 monospace block。
+对于 `choose_title` 和 `show_results`，MCP host 应该发一个 picker 问题，把 `agent_clarify.display_table` 放进 monospace block；如果存在 `agent_clarify.display_notice`，就把它追加到 block 后面；把 `agent_clarify.choices` 作为短数字按钮标签传入，再用用户选择的数字通过 `agent_clarify.response_mapping` 映射结果。直接调用 REST 的 Telegram adapter 如果支持 Bot API `sendRichMessage`，应该优先渲染 `choice_rich_message`，并把 `choice_buttons` 放在下面。如果做不到，就只发送 `choice_display`。使用默认 `hermes-default` REST 响应的纯文本 host 可以把 `choices_table` 放进 monospace block。
 
 ### 告诉 Agent 什么时候用 qBitlarr
 

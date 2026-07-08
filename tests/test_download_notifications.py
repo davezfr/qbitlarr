@@ -9,6 +9,8 @@ from mcp_server.server import _maybe_register_completion_watch, _start_notifier_
 from mcp_server.notifications import (
     DownloadCompletionNotifier,
     DownloadWatchStore,
+    _call_send_status_message,
+    default_watch_store_path,
     _send_or_edit_telegram_status_message,
     _telegram_bot_token,
     run_completion_hook_from_env,
@@ -117,6 +119,33 @@ def test_download_watch_store_reactivates_requeued_hash(tmp_path):
     assert watch["error_count"] == 0
     assert watch["last_error"] is None
     assert len(store.pending_watches()) == 1
+
+
+def test_download_watch_store_quarantines_corrupt_json(tmp_path):
+    store_path = tmp_path / "watches.json"
+    store_path.write_text("{not-json", encoding="utf-8")
+    store = DownloadWatchStore(store_path)
+
+    assert store.pending_watches() == []
+    assert not store_path.exists()
+    assert (tmp_path / "watches.json.corrupt").read_text(encoding="utf-8") == "{not-json"
+
+    watch = store.upsert_watch(
+        info_hash="abcdef",
+        title="Example Movie",
+        notification_target="telegram:12345",
+        requester_id="user-a",
+    )
+
+    assert watch["info_hash"] == "abcdef"
+    assert len(store.pending_watches()) == 1
+
+
+def test_default_watch_store_path_uses_user_data_dir(monkeypatch, tmp_path):
+    monkeypatch.delenv("QBITLARR_NOTIFICATION_WATCHES_PATH", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+
+    assert default_watch_store_path() == tmp_path / "xdg" / "qbitlarr" / "download-notification-watches.json"
 
 
 def test_notifier_sends_one_message_when_download_completes(tmp_path):
@@ -307,6 +336,81 @@ def test_notifier_sends_download_complete_even_when_completion_hook_retries(tmp_
     assert watches[0]["error_count"] == 2
 
 
+def test_notifier_keeps_polling_other_watches_when_completion_send_fails(tmp_path):
+    sent: list[tuple[str, str]] = []
+    store = DownloadWatchStore(tmp_path / "watches.json")
+    client = FakeClient(
+        {
+            "badfeed": {
+                "name": "Broken.Movie.2026.1080p.WEB-DL.H.264-GRP",
+                "state": "uploading",
+                "progress": 1.0,
+                "hash": "badfeed",
+            },
+            "abcdef": {
+                "name": "Example.Movie.2026.1080p.WEB-DL.H.264-GRP",
+                "state": "uploading",
+                "progress": 1.0,
+                "hash": "abcdef",
+            },
+        }
+    )
+
+    async def fake_send(target, message):
+        if "Broken Movie" in message:
+            raise RuntimeError("telegram unavailable")
+        sent.append((target, message))
+
+    notifier = DownloadCompletionNotifier(store=store, client=client, send_message=fake_send, max_errors=3)
+    store.upsert_watch(
+        info_hash="badfeed",
+        title="Broken Movie",
+        notification_target="telegram:12345",
+        requester_id="user-a",
+    )
+    store.upsert_watch(
+        info_hash="abcdef",
+        title="Example Movie",
+        notification_target="telegram:12345",
+        requester_id="user-a",
+    )
+
+    asyncio.run(notifier.poll_once())
+
+    assert sent == [("telegram:12345", "Download complete: Example Movie")]
+    watches = {watch["info_hash"]: watch for watch in json.loads(Path(tmp_path / "watches.json").read_text())["watches"]}
+    assert watches["badfeed"]["notified_at"] is None
+    assert watches["badfeed"]["error_count"] == 1
+    assert watches["badfeed"]["last_error"] == "completion notification failed: telegram unavailable"
+    assert watches["abcdef"]["notified_at"] is not None
+
+
+def test_poll_loop_continues_after_poll_once_failure(monkeypatch, tmp_path):
+    store = DownloadWatchStore(tmp_path / "watches.json")
+    client = FakeClient({})
+    notifier = DownloadCompletionNotifier(store=store, client=client, send_message=lambda _target, _message: None)
+    calls = []
+
+    async def flaky_poll_once():
+        calls.append("poll")
+        if len(calls) == 1:
+            raise RuntimeError("temporary failure")
+        raise asyncio.CancelledError()
+
+    async def no_sleep(_seconds):
+        return None
+
+    notifier.poll_once = flaky_poll_once
+    monkeypatch.setattr("mcp_server.notifications.asyncio.sleep", no_sleep)
+
+    try:
+        asyncio.run(notifier._poll_loop())
+    except asyncio.CancelledError:
+        pass
+
+    assert calls == ["poll", "poll"]
+
+
 def test_notifier_publishes_separate_progress_status_message(tmp_path):
     status_updates: list[tuple[str, str, str, str | None]] = []
     store = DownloadWatchStore(tmp_path / "watches.json")
@@ -403,6 +507,32 @@ def test_notifier_keeps_watch_when_progress_status_send_fails(tmp_path):
     assert watches[0]["error_count"] == 1
     assert watches[0]["last_error"] == "progress update failed: telegram unavailable"
     assert watches[0]["progress_tracking"]["message_id"] is None
+
+
+def test_status_message_type_error_inside_callback_is_not_retried_as_legacy_signature():
+    calls = []
+
+    async def fake_status_send(_target, _status_key, _message, _message_id=None, _buttons=None):
+        calls.append("called")
+        raise TypeError("argument exploded inside transport")
+
+    try:
+        asyncio.run(
+            _call_send_status_message(
+                fake_status_send,
+                "telegram:12345",
+                "qbitlarr-download:abcdef",
+                "status",
+                None,
+                [{"text": "Pause", "callback_data": "dl:pause:abcdef"}],
+            )
+        )
+    except TypeError as exc:
+        assert str(exc) == "argument exploded inside transport"
+    else:
+        raise AssertionError("internal TypeError should propagate")
+
+    assert calls == ["called"]
 
 
 def test_notifier_finalizes_expired_progress_message_on_completion(tmp_path):
@@ -871,8 +1001,8 @@ def test_send_hermes_message_uses_configured_profile(monkeypatch):
         async def wait(self):
             return 0
 
-    async def fake_create_subprocess_exec(*args):
-        calls.append(args)
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        calls.append((args, kwargs))
         return FakeProcess()
 
     monkeypatch.setenv("QBITLARR_HERMES_BIN", "/usr/local/bin/hermes")
@@ -883,16 +1013,61 @@ def test_send_hermes_message_uses_configured_profile(monkeypatch):
 
     assert calls == [
         (
-            "/usr/local/bin/hermes",
-            "--profile",
-            "example-bot",
-            "send",
-            "--to",
-            "telegram:12345",
-            "--quiet",
-            "done",
+            (
+                "/usr/local/bin/hermes",
+                "--profile",
+                "example-bot",
+                "send",
+                "--to",
+                "telegram:12345",
+                "--quiet",
+                "done",
+            ),
+            {
+                "stdout": asyncio.subprocess.PIPE,
+                "stderr": asyncio.subprocess.PIPE,
+            },
         )
     ]
+
+
+def test_send_hermes_message_times_out(monkeypatch):
+    class FakeProcess:
+        def __init__(self):
+            self.killed = False
+            self.reaped_after_kill = False
+
+        async def wait(self):
+            if self.killed:
+                self.reaped_after_kill = True
+                return -9
+            await asyncio.Event().wait()
+            return 0
+
+        def kill(self):
+            self.killed = True
+
+    process = FakeProcess()
+
+    async def fake_create_subprocess_exec(*_args, **_kwargs):
+        return process
+
+    async def fake_wait_for(_awaitable, timeout):
+        assert timeout == 0.5
+        raise TimeoutError
+
+    monkeypatch.setenv("QBITLARR_HERMES_SEND_TIMEOUT_SECONDS", "0.5")
+    monkeypatch.setattr("mcp_server.notifications.asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr("mcp_server.notifications.asyncio.wait_for", fake_wait_for)
+
+    try:
+        asyncio.run(send_hermes_message("telegram:12345", "done"))
+    except RuntimeError as exc:
+        assert str(exc) == "hermes send timed out after 0.5 seconds"
+    else:
+        raise AssertionError("send_hermes_message should fail when hermes times out")
+    assert process.killed is True
+    assert process.reaped_after_kill is True
 
 
 def test_run_completion_hook_from_env_sends_json_payload(monkeypatch):

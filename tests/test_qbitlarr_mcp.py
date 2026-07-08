@@ -52,6 +52,10 @@ def test_agent_handle_payload_for_release_choices_uses_clarify_safe_fields():
             "1.  WEBRip  H.265  🧲 3635  💾 1.8GB\n"
             "2.  WEBRip  H.265  🧲 1100  💾 2.3GB"
         ),
+        "display_notice": (
+            "• 🧲: Seed activity; more seeders usually download faster.\n"
+            "• 💾: File size; smaller files usually download faster."
+        ),
         "choices": ["1", "2"],
         "response_mapping": [
             {"choice": "1", "response": "1", "index": 1},

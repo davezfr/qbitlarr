@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 from hmac import compare_digest
 from typing import Awaitable, Callable
 
@@ -46,6 +47,7 @@ from app.services.qbittorrent import (
     get_download_status_from_qbittorrent,
     list_downloads_from_qbittorrent,
 )
+from app.services.query_snapshots import QuerySnapshotStore
 
 
 logging.basicConfig(
@@ -77,8 +79,6 @@ async def start_cleanup_task() -> None:
         logger.warning("Cleanup task not started because configuration is incomplete: %s", exc)
         return
 
-    if not getattr(settings, "cleanup_enabled", False):
-        return
     if _cleanup_task is None or _cleanup_task.done():
         _cleanup_task = asyncio.create_task(_cleanup_completed_downloads_loop(settings))
 
@@ -98,20 +98,44 @@ async def _cleanup_completed_downloads_loop(
     settings: Settings,
     *,
     cleanup_func: Callable[[Settings], Awaitable[dict]] = cleanup_completed_downloads_from_qbittorrent,
+    snapshot_prune_func: Callable[[Settings], Awaitable[dict]] | None = None,
     sleep_func: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
+    if snapshot_prune_func is None:
+        snapshot_prune_func = _prune_query_snapshots
     interval = max(float(getattr(settings, "cleanup_interval_seconds", 21_600)), 60.0)
     while True:
+        if getattr(settings, "cleanup_enabled", True):
+            try:
+                summary = await cleanup_func(settings)
+                deleted_count = int(summary.get("deleted_count", 0))
+                if deleted_count:
+                    logger.info("Cleaned up %s completed qBitlarr torrent task(s)", deleted_count)
+            except asyncio.CancelledError:
+                raise
+            except UpstreamServiceError as exc:
+                logger.warning("Completed download cleanup failed: %s", exc)
+            except Exception:
+                logger.exception("Completed download cleanup failed unexpectedly")
         try:
-            summary = await cleanup_func(settings)
-            deleted_count = int(summary.get("deleted_count", 0))
-            if deleted_count:
-                logger.info("Cleaned up %s completed qBitlarr torrent task(s)", deleted_count)
+            snapshot_summary = await snapshot_prune_func(settings)
+            snapshot_deleted_count = int(snapshot_summary.get("deleted_count", 0))
+            if snapshot_deleted_count:
+                logger.info("Pruned %s qBitlarr query snapshot(s)", snapshot_deleted_count)
         except asyncio.CancelledError:
             raise
-        except UpstreamServiceError as exc:
-            logger.warning("Completed download cleanup failed: %s", exc)
+        except Exception:
+            logger.exception("Query snapshot prune failed unexpectedly")
         await sleep_func(interval)
+
+
+async def _prune_query_snapshots(settings: Settings) -> dict:
+    retention_seconds = int(getattr(settings, "query_snapshot_retention_seconds", 604_800))
+    return await asyncio.to_thread(
+        QuerySnapshotStore(getattr(settings, "query_snapshot_dir", "data/query-snapshots")).prune,
+        now=datetime.now(UTC),
+        retention=timedelta(seconds=max(retention_seconds, 0)),
+    )
 
 
 app.include_router(search_router)

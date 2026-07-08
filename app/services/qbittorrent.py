@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import logging
 import posixpath
@@ -185,7 +187,7 @@ def _info_hash_from_magnet(download_link: str) -> str | None:
 
     for value in parse_qs(parsed.query).get("xt", []):
         if value.casefold().startswith("urn:btih:"):
-            return value.rsplit(":", 1)[-1]
+            return _normalize_btih_hash(value.rsplit(":", 1)[-1])
 
     return None
 
@@ -198,11 +200,23 @@ def _get_torrent_status(qbit_client, info_hash: str | None, *, tag: str | None =
     if not info_hash:
         return None
 
-    target = info_hash.casefold()
-    for torrent in _list_torrents(qbit_client, torrent_hashes=info_hash, tag=tag):
+    target = _normalize_btih_hash(info_hash)
+    for torrent in _list_torrents(qbit_client, torrent_hashes=target, tag=tag):
         if str(torrent.hash).casefold() == target:
             return _torrent_status_from_client_torrent(torrent)
     return None
+
+
+def _normalize_btih_hash(value: str) -> str:
+    stripped = value.strip()
+    if re.fullmatch(r"[0-9a-fA-F]{40}", stripped):
+        return stripped.casefold()
+    if re.fullmatch(r"[A-Z2-7a-z]{32}", stripped):
+        try:
+            return base64.b32decode(stripped.upper()).hex()
+        except (binascii.Error, ValueError):
+            return stripped.casefold()
+    return stripped.casefold()
 
 
 def _torrent_status_from_client_torrent(torrent) -> TorrentStatus:
@@ -451,9 +465,10 @@ async def _control_download_in_qbittorrent(
                 qbit_client.torrents_resume(torrent_hashes=info_hash)
             elif action == "delete":
                 qbit_client.torrents_delete(delete_files=False, torrent_hashes=info_hash)
+                return status
             else:
                 raise ValueError(f"Unsupported download control action: {action}")
-            return status
+            return _get_torrent_status(qbit_client, info_hash, tag=requester_tag) or status
 
     try:
         return await asyncio.to_thread(control_sync)

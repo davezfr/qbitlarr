@@ -1,9 +1,12 @@
 import asyncio
+import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app import main as app_main
 from app.api.download import _download_title_from_link
 from app.main import (
     DownloadRequest,
@@ -140,14 +143,42 @@ def test_settings_accepts_custom_retention_policy(monkeypatch):
     assert settings.cleanup_include_legacy_requester_tags is False
 
 
+def test_start_cleanup_task_starts_loop_when_download_cleanup_is_disabled(monkeypatch):
+    settings = SimpleNamespace(cleanup_enabled=False, cleanup_interval_seconds=120)
+    created = []
+
+    class FakeTask:
+        def done(self):
+            return False
+
+    fake_task = FakeTask()
+
+    def fake_create_task(coro):
+        created.append(coro)
+        coro.close()
+        return fake_task
+
+    monkeypatch.setattr(app_main, "_cleanup_task", None)
+    monkeypatch.setattr(app_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(app_main.asyncio, "create_task", fake_create_task)
+
+    asyncio.run(app_main.start_cleanup_task())
+
+    assert len(created) == 1
+    assert app_main._cleanup_task is fake_task
+
+
 def test_cleanup_loop_runs_once_before_sleeping():
-    settings = SimpleNamespace(cleanup_interval_seconds=120)
+    settings = SimpleNamespace(cleanup_enabled=True, cleanup_interval_seconds=120)
     cleanup_calls = []
     sleep_calls = []
 
     async def fake_cleanup(arg):
         cleanup_calls.append(arg)
         return {"status": "success", "deleted_count": 0, "deleted_hashes": []}
+
+    async def fake_prune(_arg):
+        return {"status": "success", "deleted_count": 0}
 
     async def fake_sleep(interval):
         sleep_calls.append(interval)
@@ -158,12 +189,220 @@ def test_cleanup_loop_runs_once_before_sleeping():
             _cleanup_completed_downloads_loop(
                 settings,
                 cleanup_func=fake_cleanup,
+                snapshot_prune_func=fake_prune,
                 sleep_func=fake_sleep,
             )
         )
 
     assert cleanup_calls == [settings]
     assert sleep_calls == [120.0]
+
+
+def test_cleanup_loop_continues_after_unexpected_error():
+    settings = SimpleNamespace(cleanup_enabled=True, cleanup_interval_seconds=120)
+    cleanup_calls = []
+    sleep_calls = []
+
+    async def fake_cleanup(arg):
+        cleanup_calls.append(arg)
+        if len(cleanup_calls) == 1:
+            raise TypeError("unexpected qBittorrent shape")
+        return {"status": "success", "deleted_count": 0, "deleted_hashes": []}
+
+    async def fake_prune(_arg):
+        return {"status": "success", "deleted_count": 0}
+
+    async def fake_sleep(interval):
+        sleep_calls.append(interval)
+        if len(sleep_calls) == 2:
+            raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            _cleanup_completed_downloads_loop(
+                settings,
+                cleanup_func=fake_cleanup,
+                snapshot_prune_func=fake_prune,
+                sleep_func=fake_sleep,
+            )
+        )
+
+    assert cleanup_calls == [settings, settings]
+    assert sleep_calls == [120.0, 120.0]
+
+
+def test_cleanup_loop_prunes_query_snapshots_after_download_cleanup():
+    settings = SimpleNamespace(cleanup_enabled=True, cleanup_interval_seconds=120)
+    cleanup_calls = []
+    prune_calls = []
+    sleep_calls = []
+
+    async def fake_cleanup(arg):
+        cleanup_calls.append(arg)
+        return {"status": "success", "deleted_count": 0, "deleted_hashes": []}
+
+    async def fake_prune(arg):
+        prune_calls.append(arg)
+        return {"status": "success", "deleted_count": 2}
+
+    async def fake_sleep(interval):
+        sleep_calls.append(interval)
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            _cleanup_completed_downloads_loop(
+                settings,
+                cleanup_func=fake_cleanup,
+                snapshot_prune_func=fake_prune,
+                sleep_func=fake_sleep,
+            )
+        )
+
+    assert cleanup_calls == [settings]
+    assert prune_calls == [settings]
+    assert sleep_calls == [120.0]
+
+
+def test_cleanup_loop_skips_download_cleanup_when_disabled_but_prunes_query_snapshots():
+    settings = SimpleNamespace(cleanup_enabled=False, cleanup_interval_seconds=120)
+    cleanup_calls = []
+    prune_calls = []
+    sleep_calls = []
+
+    async def fake_cleanup(arg):
+        cleanup_calls.append(arg)
+        raise AssertionError("download cleanup should be disabled")
+
+    async def fake_prune(arg):
+        prune_calls.append(arg)
+        return {"status": "success", "deleted_count": 1}
+
+    async def fake_sleep(interval):
+        sleep_calls.append(interval)
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            _cleanup_completed_downloads_loop(
+                settings,
+                cleanup_func=fake_cleanup,
+                snapshot_prune_func=fake_prune,
+                sleep_func=fake_sleep,
+            )
+        )
+
+    assert cleanup_calls == []
+    assert prune_calls == [settings]
+    assert sleep_calls == [120.0]
+
+
+def test_cleanup_loop_prunes_query_snapshots_after_download_cleanup_failure():
+    settings = SimpleNamespace(cleanup_enabled=True, cleanup_interval_seconds=120)
+    cleanup_calls = []
+    prune_calls = []
+    sleep_calls = []
+
+    async def fake_cleanup(arg):
+        cleanup_calls.append(arg)
+        raise TypeError("unexpected qBittorrent shape")
+
+    async def fake_prune(arg):
+        prune_calls.append(arg)
+        return {"status": "success", "deleted_count": 1}
+
+    async def fake_sleep(interval):
+        sleep_calls.append(interval)
+        raise asyncio.CancelledError
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(
+            _cleanup_completed_downloads_loop(
+                settings,
+                cleanup_func=fake_cleanup,
+                snapshot_prune_func=fake_prune,
+                sleep_func=fake_sleep,
+            )
+        )
+
+    assert cleanup_calls == [settings]
+    assert prune_calls == [settings]
+    assert sleep_calls == [120.0]
+
+
+def test_query_snapshot_store_prunes_old_snapshots(tmp_path):
+    from app.services.query_snapshots import QuerySnapshotStore
+
+    store = QuerySnapshotStore(str(tmp_path))
+    store.create(
+        query_id="old-query",
+        request={"input": "old"},
+        status="primary_ready",
+        reason="primary_results_ready",
+        results=[],
+    )
+    store.create(
+        query_id="new-query",
+        request={"input": "new"},
+        status="primary_ready",
+        reason="primary_results_ready",
+        results=[],
+    )
+    old_path = tmp_path / "old-query.json"
+    payload = json.loads(old_path.read_text(encoding="utf-8"))
+    payload["updated_at"] = "2026-01-01T00:00:00Z"
+    old_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = store.prune(
+        now=datetime(2026, 1, 10, tzinfo=UTC),
+        retention=timedelta(days=7),
+    )
+
+    assert summary["deleted_count"] == 1
+    assert summary["deleted_query_ids"] == ["old-query"]
+    assert not old_path.exists()
+    assert (tmp_path / "new-query.json").exists()
+
+
+def test_query_snapshot_store_prune_skips_invalid_timestamp_and_prunes_other_snapshots(tmp_path):
+    from app.services.query_snapshots import QuerySnapshotStore
+
+    store = QuerySnapshotStore(str(tmp_path))
+    store.create(
+        query_id="old-query",
+        request={"input": "old"},
+        status="primary_ready",
+        reason="primary_results_ready",
+        results=[],
+    )
+    store.create(
+        query_id="new-query",
+        request={"input": "new"},
+        status="primary_ready",
+        reason="primary_results_ready",
+        results=[],
+    )
+    old_path = tmp_path / "old-query.json"
+    old_payload = json.loads(old_path.read_text(encoding="utf-8"))
+    old_payload["updated_at"] = "2026-01-01T00:00:00Z"
+    old_path.write_text(json.dumps(old_payload), encoding="utf-8")
+
+    bad_timestamp_payload = dict(old_payload)
+    bad_timestamp_payload["query_id"] = "bad-timestamp-query"
+    bad_timestamp_payload["updated_at"] = "not-a-timestamp"
+    bad_timestamp_path = tmp_path / "bad-timestamp-query.json"
+    bad_timestamp_path.write_text(json.dumps(bad_timestamp_payload), encoding="utf-8")
+
+    summary = store.prune(
+        now=datetime(2026, 1, 10, tzinfo=UTC),
+        retention=timedelta(days=7),
+    )
+
+    assert summary["deleted_count"] == 1
+    assert summary["deleted_query_ids"] == ["old-query"]
+    assert not old_path.exists()
+    assert bad_timestamp_path.exists()
+    assert (tmp_path / "new-query.json").exists()
 
 
 def test_build_prowlarr_search_params_uses_query_search_by_default():

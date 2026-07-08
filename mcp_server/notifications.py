@@ -1,9 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import fcntl
+import inspect
 import json
+import logging
 import os
 import shlex
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
@@ -24,11 +29,16 @@ SendStatusMessage = Callable[[str, str, str, str | None, list[dict[str, str]] | 
 CompletionHook = Callable[[dict[str, Any]], Awaitable[None]]
 COMPLETE_STATES = {"uploading", "stalledUP", "pausedUP", "forcedUP", "queuedUP"}
 DEFAULT_MAX_ERRORS = 10
+DEFAULT_HERMES_SEND_TIMEOUT_SECONDS = 20.0
+logger = logging.getLogger("qbitlarr-mcp.notifications")
 
 
 class DownloadWatchStore:
     def __init__(self, path: str | Path) -> None:
-        self.path = Path(path)
+        self.path = Path(path).expanduser()
+        self._lock = threading.RLock()
+        self._lock_depth = 0
+        self._lock_handle = None
 
     def upsert_watch(
         self,
@@ -40,55 +50,57 @@ class DownloadWatchStore:
         requester_id: str | None = None,
         track_progress: bool = False,
     ) -> dict[str, Any]:
-        normalized_hash = _normalize_hash(info_hash)
-        normalized_target = _normalize_target(notification_target)
-        payload = self._read()
-        now = _now()
+        with self._store_lock():
+            normalized_hash = _normalize_hash(info_hash)
+            normalized_target = _normalize_target(notification_target)
+            payload = self._read()
+            now = _now()
 
-        for watch in payload["watches"]:
-            if watch["info_hash"] == normalized_hash and watch["notification_target"] == normalized_target:
-                watch["title"] = title.strip() or watch["title"]
-                watch["requester_id"] = requester_id or watch.get("requester_id")
-                watch["metadata"] = _merge_metadata(watch.get("metadata"), metadata)
-                watch["notified_at"] = None
-                watch["abandoned_at"] = None
-                watch["completion_notified_at"] = None
-                watch["removal_notified_at"] = None
-                watch["error_count"] = 0
-                watch["last_error"] = None
-                if track_progress:
-                    watch["progress_tracking"] = _new_progress_tracking(normalized_hash, now=now)
-                watch["updated_at"] = now
-                self._write(payload)
-                return dict(watch)
+            for watch in payload["watches"]:
+                if watch["info_hash"] == normalized_hash and watch["notification_target"] == normalized_target:
+                    watch["title"] = title.strip() or watch["title"]
+                    watch["requester_id"] = requester_id or watch.get("requester_id")
+                    watch["metadata"] = _merge_metadata(watch.get("metadata"), metadata)
+                    watch["notified_at"] = None
+                    watch["abandoned_at"] = None
+                    watch["completion_notified_at"] = None
+                    watch["removal_notified_at"] = None
+                    watch["error_count"] = 0
+                    watch["last_error"] = None
+                    if track_progress:
+                        watch["progress_tracking"] = _new_progress_tracking(normalized_hash, now=now)
+                    watch["updated_at"] = now
+                    self._write(payload)
+                    return dict(watch)
 
-        watch = {
-            "info_hash": normalized_hash,
-            "title": title.strip() or normalized_hash,
-            "notification_target": normalized_target,
-            "requester_id": requester_id,
-            "metadata": _normalize_metadata(metadata),
-            "created_at": now,
-            "updated_at": now,
-            "notified_at": None,
-            "completion_notified_at": None,
-            "removal_notified_at": None,
-            "abandoned_at": None,
-            "error_count": 0,
-            "last_error": None,
-        }
-        if track_progress:
-            watch["progress_tracking"] = _new_progress_tracking(normalized_hash, now=now)
-        payload["watches"].append(watch)
-        self._write(payload)
-        return dict(watch)
+            watch = {
+                "info_hash": normalized_hash,
+                "title": title.strip() or normalized_hash,
+                "notification_target": normalized_target,
+                "requester_id": requester_id,
+                "metadata": _normalize_metadata(metadata),
+                "created_at": now,
+                "updated_at": now,
+                "notified_at": None,
+                "completion_notified_at": None,
+                "removal_notified_at": None,
+                "abandoned_at": None,
+                "error_count": 0,
+                "last_error": None,
+            }
+            if track_progress:
+                watch["progress_tracking"] = _new_progress_tracking(normalized_hash, now=now)
+            payload["watches"].append(watch)
+            self._write(payload)
+            return dict(watch)
 
     def pending_watches(self) -> list[dict[str, Any]]:
-        return [
-            dict(watch)
-            for watch in self._read()["watches"]
-            if not watch.get("notified_at") and not watch.get("abandoned_at")
-        ]
+        with self._store_lock():
+            return [
+                dict(watch)
+                for watch in self._read()["watches"]
+                if not watch.get("notified_at") and not watch.get("abandoned_at")
+            ]
 
     def mark_notified(self, *, info_hash: str, notification_target: str) -> None:
         self._update_watch(
@@ -178,20 +190,22 @@ class DownloadWatchStore:
     ) -> dict[str, Any] | None:
         normalized_hash = _normalize_hash(info_hash)
         normalized_target = _normalize_target(notification_target)
-        payload = self._read()
-        for watch in payload["watches"]:
-            if watch["info_hash"] == normalized_hash and watch["notification_target"] == normalized_target:
-                watch.update(update_fn(watch))
-                self._write(payload)
-                return dict(watch)
+        with self._store_lock():
+            payload = self._read()
+            for watch in payload["watches"]:
+                if watch["info_hash"] == normalized_hash and watch["notification_target"] == normalized_target:
+                    watch.update(update_fn(watch))
+                    self._write(payload)
+                    return dict(watch)
         return None
 
     def _read(self) -> dict[str, Any]:
         if not self.path.exists():
             return {"watches": []}
         try:
-            payload = json.loads(self.path.read_text())
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
+            self._quarantine_corrupt_file()
             return {"watches": []}
         watches = payload.get("watches")
         if not isinstance(watches, list):
@@ -200,7 +214,46 @@ class DownloadWatchStore:
 
     def _write(self, payload: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+        tmp_path = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+        tmp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, self.path)
+
+    def _quarantine_corrupt_file(self) -> None:
+        target = self.path.with_suffix(self.path.suffix + ".corrupt")
+        if target.exists():
+            target = self.path.with_suffix(self.path.suffix + f".corrupt-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}")
+        with contextlib.suppress(OSError):
+            self.path.replace(target)
+
+    @contextlib.contextmanager
+    def _store_lock(self):
+        with self._lock:
+            if self._lock_depth == 0:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                handle = self.path.with_suffix(self.path.suffix + ".lock").open("a+")
+                try:
+                    fcntl.flock(handle, fcntl.LOCK_EX)
+                except Exception:
+                    handle.close()
+                    raise
+                self._lock_handle = handle
+            self._lock_depth += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._lock_depth -= 1
+                if self._lock_depth == 0:
+                    handle = self._lock_handle
+                    self._lock_handle = None
+                    if handle is not None:
+                        try:
+                            fcntl.flock(handle, fcntl.LOCK_UN)
+                        finally:
+                            handle.close()
 
 
 class DownloadCompletionNotifier:
@@ -232,8 +285,8 @@ class DownloadCompletionNotifier:
             send_message=send_hermes_message,
             send_status_message=send_status_message_from_env,
             completion_hook=completion_hook_from_env(),
-            poll_interval_seconds=float(os.getenv("QBITLARR_NOTIFICATION_INTERVAL_SECONDS", "3")),
-            max_errors=int(os.getenv("QBITLARR_NOTIFICATION_MAX_ERRORS", str(DEFAULT_MAX_ERRORS))),
+            poll_interval_seconds=_float_env("QBITLARR_NOTIFICATION_INTERVAL_SECONDS", 3.0),
+            max_errors=_int_env("QBITLARR_NOTIFICATION_MAX_ERRORS", DEFAULT_MAX_ERRORS),
         )
 
     async def register_watch(
@@ -262,76 +315,50 @@ class DownloadCompletionNotifier:
     def start(self) -> None:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._poll_loop())
+            self._task.add_done_callback(_log_task_failure)
 
     async def poll_once(self) -> None:
         for watch in self.store.pending_watches():
             try:
-                status = await self.client.get_download_status(watch["info_hash"])
+                await self._poll_watch(watch)
+            except asyncio.CancelledError:
+                raise
             except Exception as exc:
-                if _download_was_removed(exc):
-                    if not watch.get("removal_notified_at"):
-                        await self.send_message(
-                            watch["notification_target"],
-                            _removed_message(watch),
-                        )
-                        self.store.mark_removal_notified(
-                            info_hash=watch["info_hash"],
-                            notification_target=watch["notification_target"],
-                        )
+                logger.exception(
+                    "Download notification watch failed for info_hash=%s target=%s",
+                    watch.get("info_hash"),
+                    watch.get("notification_target"),
+                )
+                self._mark_error_safely(watch, "watch poll failed", exc)
 
-                    if self.completion_hook is not None:
-                        try:
-                            await self.completion_hook(_removed_event(watch, exc))
-                        except Exception as hook_exc:
-                            updated_watch = self.store.mark_error(
-                                info_hash=watch["info_hash"],
-                                notification_target=watch["notification_target"],
-                                error="removal hook failed: %s" % hook_exc,
-                            )
-                            if updated_watch and _error_count(updated_watch) >= self.max_errors:
-                                self.store.mark_abandoned(
-                                    info_hash=watch["info_hash"],
-                                    notification_target=watch["notification_target"],
-                                    error=str(hook_exc),
-                                )
-                            continue
+    async def _poll_watch(self, watch: dict[str, Any]) -> None:
+        try:
+            status = await self.client.get_download_status(watch["info_hash"])
+        except Exception as exc:
+            if _download_was_removed(exc):
+                await self._handle_removed_watch(watch, exc)
+                return
 
-                    self.store.mark_abandoned(
-                        info_hash=watch["info_hash"],
-                        notification_target=watch["notification_target"],
-                        error=str(exc),
-                    )
-                    continue
-
-                updated_watch = self.store.mark_error(
+            updated_watch = self.store.mark_error(
+                info_hash=watch["info_hash"],
+                notification_target=watch["notification_target"],
+                error=str(exc),
+            )
+            if updated_watch and _error_count(updated_watch) >= self.max_errors:
+                self.store.mark_abandoned(
                     info_hash=watch["info_hash"],
                     notification_target=watch["notification_target"],
                     error=str(exc),
                 )
-                if updated_watch and _error_count(updated_watch) >= self.max_errors:
-                    self.store.mark_abandoned(
-                        info_hash=watch["info_hash"],
-                        notification_target=watch["notification_target"],
-                        error=str(exc),
-                    )
+                with contextlib.suppress(Exception):
                     await self.send_message(
                         watch["notification_target"],
                         _abandoned_message(updated_watch),
                     )
-                continue
+            return
 
-            completed = _download_complete(status)
-            if not completed:
-                try:
-                    await self.publish_progress_snapshot(watch, status)
-                except Exception as exc:
-                    self.store.mark_error(
-                        info_hash=watch["info_hash"],
-                        notification_target=watch["notification_target"],
-                        error="progress update failed: %s" % exc,
-                    )
-                continue
-
+        completed = _download_complete(status)
+        if not completed:
             try:
                 await self.publish_progress_snapshot(watch, status)
             except Exception as exc:
@@ -340,38 +367,111 @@ class DownloadCompletionNotifier:
                     notification_target=watch["notification_target"],
                     error="progress update failed: %s" % exc,
                 )
+            return
 
-            if not watch.get("completion_notified_at"):
+        try:
+            await self.publish_progress_snapshot(watch, status)
+        except Exception as exc:
+            self.store.mark_error(
+                info_hash=watch["info_hash"],
+                notification_target=watch["notification_target"],
+                error="progress update failed: %s" % exc,
+            )
+
+        if not watch.get("completion_notified_at"):
+            try:
                 await self.send_message(watch["notification_target"], _completion_message(watch, status))
-                self.store.mark_completion_notified(
+            except Exception as exc:
+                self._mark_error_safely(watch, "completion notification failed", exc)
+                return
+            self.store.mark_completion_notified(
+                info_hash=watch["info_hash"],
+                notification_target=watch["notification_target"],
+            )
+
+        if self.completion_hook is not None:
+            try:
+                await self.completion_hook(_completion_event(watch, status))
+            except Exception as exc:
+                updated_watch = self.store.mark_error(
                     info_hash=watch["info_hash"],
                     notification_target=watch["notification_target"],
+                    error="completion hook failed: %s" % exc,
                 )
-
-            if self.completion_hook is not None:
-                try:
-                    await self.completion_hook(_completion_event(watch, status))
-                except Exception as exc:
-                    updated_watch = self.store.mark_error(
+                if updated_watch and _error_count(updated_watch) >= self.max_errors:
+                    self.store.mark_abandoned(
                         info_hash=watch["info_hash"],
                         notification_target=watch["notification_target"],
-                        error="completion hook failed: %s" % exc,
+                        error=str(exc),
                     )
-                    if updated_watch and _error_count(updated_watch) >= self.max_errors:
-                        self.store.mark_abandoned(
-                            info_hash=watch["info_hash"],
-                            notification_target=watch["notification_target"],
-                            error=str(exc),
-                        )
+                    with contextlib.suppress(Exception):
                         await self.send_message(
                             watch["notification_target"],
                             _completion_hook_failed_message(updated_watch, status, exc),
                         )
-                    continue
+                return
 
-            self.store.mark_notified(
+        self.store.mark_notified(
+            info_hash=watch["info_hash"],
+            notification_target=watch["notification_target"],
+        )
+
+    async def _handle_removed_watch(self, watch: dict[str, Any], exc: Exception) -> None:
+        if not watch.get("removal_notified_at"):
+            try:
+                await self.send_message(
+                    watch["notification_target"],
+                    _removed_message(watch),
+                )
+            except Exception as send_exc:
+                self._mark_error_safely(watch, "removal notification failed", send_exc)
+                return
+            self.store.mark_removal_notified(
                 info_hash=watch["info_hash"],
                 notification_target=watch["notification_target"],
+            )
+
+        if self.completion_hook is not None:
+            try:
+                await self.completion_hook(_removed_event(watch, exc))
+            except Exception as hook_exc:
+                updated_watch = self.store.mark_error(
+                    info_hash=watch["info_hash"],
+                    notification_target=watch["notification_target"],
+                    error="removal hook failed: %s" % hook_exc,
+                )
+                if updated_watch and _error_count(updated_watch) >= self.max_errors:
+                    self.store.mark_abandoned(
+                        info_hash=watch["info_hash"],
+                        notification_target=watch["notification_target"],
+                        error=str(hook_exc),
+                    )
+                return
+
+        self.store.mark_abandoned(
+            info_hash=watch["info_hash"],
+            notification_target=watch["notification_target"],
+            error=str(exc),
+        )
+
+    def _mark_error_safely(self, watch: dict[str, Any], prefix: str, exc: Exception) -> None:
+        try:
+            updated_watch = self.store.mark_error(
+                info_hash=watch["info_hash"],
+                notification_target=watch["notification_target"],
+                error=f"{prefix}: {exc}",
+            )
+            if updated_watch and _error_count(updated_watch) >= self.max_errors:
+                self.store.mark_abandoned(
+                    info_hash=watch["info_hash"],
+                    notification_target=watch["notification_target"],
+                    error=str(exc),
+                )
+        except Exception:
+            logger.exception(
+                "Could not record notification watch error for info_hash=%s target=%s",
+                watch.get("info_hash"),
+                watch.get("notification_target"),
             )
 
     async def publish_progress_snapshot(self, watch: dict[str, Any], status: dict[str, Any]) -> None:
@@ -425,17 +525,28 @@ class DownloadCompletionNotifier:
 
     async def _poll_loop(self) -> None:
         while True:
-            await self.poll_once()
+            try:
+                await self.poll_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Download notification poll failed")
             await asyncio.sleep(self.poll_interval_seconds)
 
 
 def default_watch_store_path() -> Path:
-    return Path(os.getenv("QBITLARR_NOTIFICATION_WATCHES_PATH", "data/download-notification-watches.json"))
+    configured = os.getenv("QBITLARR_NOTIFICATION_WATCHES_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    xdg_data_home = os.getenv("XDG_DATA_HOME", "").strip()
+    data_home = Path(xdg_data_home).expanduser() if xdg_data_home else Path.home() / ".local" / "share"
+    return data_home / "qbitlarr" / "download-notification-watches.json"
 
 
 async def send_hermes_message(target: str, message: str) -> None:
     hermes_bin = os.getenv("QBITLARR_HERMES_BIN", "hermes")
     hermes_profile = os.getenv("QBITLARR_HERMES_PROFILE", "").strip()
+    timeout_seconds = _float_env("QBITLARR_HERMES_SEND_TIMEOUT_SECONDS", DEFAULT_HERMES_SEND_TIMEOUT_SECONDS)
     command = [hermes_bin]
     if hermes_profile:
         command.extend(["--profile", hermes_profile])
@@ -450,10 +561,73 @@ async def send_hermes_message(target: str, message: str) -> None:
     )
     proc = await asyncio.create_subprocess_exec(
         *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
-    return_code = await proc.wait()
+    communicate = getattr(proc, "communicate", None)
+    operation = communicate() if callable(communicate) else proc.wait()
+    operation_task = asyncio.create_task(operation)
+    try:
+        result = await asyncio.wait_for(operation_task, timeout=timeout_seconds)
+        if callable(communicate):
+            stdout, stderr = result
+            return_code = proc.returncode
+        else:
+            stdout = b""
+            stderr = b""
+            return_code = result
+    except TimeoutError as exc:
+        operation_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await operation_task
+        with contextlib.suppress(Exception):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            await proc.wait()
+        raise RuntimeError(f"hermes send timed out after {timeout_seconds:g} seconds") from exc
     if return_code != 0:
-        raise RuntimeError(f"hermes send failed with exit code {return_code}")
+        detail = _decode_process_output(stderr or stdout)
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(f"hermes send failed with exit code {return_code}{suffix}")
+
+
+def _float_env(name: str, default: float) -> float:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %s", name, value, default)
+        return default
+
+
+def _int_env(name: str, default: int) -> int:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using %s", name, value, default)
+        return default
+
+
+def _decode_process_output(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace").strip()
+    return str(value).strip()
+
+
+def _log_task_failure(task: asyncio.Task) -> None:
+    if task.cancelled():
+        return
+    try:
+        task.result()
+    except Exception:
+        logger.exception("Download notification task stopped unexpectedly")
 
 
 async def _call_send_status_message(
@@ -464,12 +638,26 @@ async def _call_send_status_message(
     message_id: str | None,
     buttons: list[dict[str, str]] | None,
 ) -> str | None:
-    try:
-        return await send_status_message(target, status_key, message, message_id, buttons)
-    except TypeError as exc:
-        if "positional" not in str(exc) and "argument" not in str(exc):
-            raise
+    if not _send_status_message_accepts_buttons(send_status_message):
         return await send_status_message(target, status_key, message, message_id)  # type: ignore[misc]
+    return await send_status_message(target, status_key, message, message_id, buttons)
+
+
+def _send_status_message_accepts_buttons(send_status_message: SendStatusMessage) -> bool:
+    try:
+        signature = inspect.signature(send_status_message)
+    except (TypeError, ValueError):
+        return True
+    positional_count = 0
+    for parameter in signature.parameters.values():
+        if parameter.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if parameter.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            positional_count += 1
+    return positional_count >= 5
 
 
 async def send_status_message_from_env(

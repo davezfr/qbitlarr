@@ -4,7 +4,7 @@ import json
 import os
 import re
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -92,7 +92,51 @@ class QuerySnapshotStore:
         )
         os.replace(temp_path, path)
 
+    def prune(
+        self,
+        *,
+        now: datetime,
+        retention: timedelta,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        if retention.total_seconds() < 0:
+            raise ValueError("retention must be non-negative")
+        cutoff = now.astimezone(UTC) - retention
+        candidates: list[tuple[str, Path, datetime]] = []
+        if not self.root_dir.exists():
+            return {"status": "success", "deleted_count": 0, "deleted_query_ids": []}
+
+        for path in self.root_dir.glob("*.json"):
+            try:
+                snapshot = QuerySnapshot.model_validate_json(path.read_text(encoding="utf-8"))
+                updated_at = _parse_snapshot_timestamp(snapshot.updated_at)
+            except Exception:
+                continue
+            if updated_at >= cutoff:
+                continue
+            candidates.append((snapshot.query_id, path, updated_at))
+
+        candidates.sort(key=lambda item: item[2])
+        if not dry_run:
+            for _query_id, path, _updated_at in candidates:
+                path.unlink(missing_ok=True)
+        return {
+            "status": "success",
+            "deleted_count": len(candidates),
+            "deleted_query_ids": [query_id for query_id, _path, _updated_at in candidates],
+        }
+
     def _path_for(self, query_id: str) -> Path:
         if not _QUERY_ID_RE.fullmatch(query_id):
             raise FileNotFoundError(query_id)
         return self.root_dir / f"{query_id}.json"
+
+
+def _parse_snapshot_timestamp(value: str) -> datetime:
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)

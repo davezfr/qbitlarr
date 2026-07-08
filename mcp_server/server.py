@@ -62,11 +62,12 @@ def create_mcp_server() -> FastMCP:
             Present them and download the user's pick. The MCP tool returns
             "agent_clarify" for this action. When it is present, ask an
             open-ended clarify question that includes agent_clarify.display_table
-            in a monospace/code block, and pass agent_clarify.choices as the
-            short numeric button labels. Use agent_clarify.response_mapping to
-            map the selected number back to a result index, then queue that
-            result. Do not pass table rows as clarify choices or append another
-            numbered list.
+            in a monospace/code block. If agent_clarify.display_notice is
+            present, append it after the block as ordinary short notice text.
+            Pass agent_clarify.choices as the short numeric button labels. Use
+            agent_clarify.response_mapping to map the selected number back to a
+            result index, then queue that result. Do not pass table rows as
+            clarify choices or append another numbered list.
           - "auto_download" (mode="auto" only): the best release was queued; an
             "alternatives" list of runner-ups is included so the user can be
             offered "or did you mean..." without a second call.
@@ -457,6 +458,10 @@ _RAW_CHOICE_RENDER_FIELDS = {
 }
 
 _AGENT_CLARIFY_MAX_ROWS = 4
+_RELEASE_CLARIFY_DISPLAY_NOTICE = (
+    "• 🧲: Seed activity; more seeders usually download faster.\n"
+    "• 💾: File size; smaller files usually download faster."
+)
 
 
 def _prepare_agent_handle_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -488,12 +493,15 @@ def _agent_clarify_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
 
     if not display_table or not response_mapping:
         return None
-    return {
+    clarify_payload = {
         "question": question,
         "display_table": display_table,
         "choices": [str(item["choice"]) for item in response_mapping],
         "response_mapping": response_mapping,
     }
+    if action == "show_results":
+        clarify_payload["display_notice"] = _RELEASE_CLARIFY_DISPLAY_NOTICE
+    return clarify_payload
 
 
 def _release_clarify_display(results: Any) -> tuple[str | None, list[dict[str, Any]]]:

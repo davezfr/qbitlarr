@@ -229,7 +229,7 @@ Wikidata keyword matching is intentionally lightweight, so obscure titles may no
 
 Override the server-wide default with `QBITLARR_DEFAULT_MODE=manual|auto|confirm`.
 
-Choice display is transport-neutral for both title disambiguation (`choose_title`) and release picking (`show_results`). The REST response includes compact `label` values for generic clarify/picker tools, plus rendered choice fields for richer chat adapters. `choice_rich_message` is Telegram Bot API 10.1-friendly rich HTML: adapters can pass its `html` value as `sendRichMessage.rich_message.html` and render `choice_buttons` below it. If rich messages are unavailable, send `choice_display` by itself and do not append `choices_table`, `results`, or `label` values. The MCP wrapper returns an agent-facing `agent_clarify` object instead: Hermes-style flows should put `agent_clarify.display_table` in a fenced text/code block, pass `agent_clarify.choices` as short numeric button labels, and map the selected number through `agent_clarify.response_mapping`. The zero-config release default is stock Hermes-friendly: `QBITLARR_MANUAL_RESULT_LIMIT=4` and `QBITLARR_CHOICE_STYLE=hermes-default`, matching Hermes-style clarify surfaces that show four rows without leaking duplicate numbered lists. If your local Telegram/Hermes adapter can render a rich table plus a closed row of five buttons, set:
+Choice display is transport-neutral for both title disambiguation (`choose_title`) and release picking (`show_results`). The REST response includes compact `label` values for generic clarify/picker tools, plus rendered choice fields for richer chat adapters. `choice_rich_message` is Telegram Bot API 10.1-friendly rich HTML: adapters can pass its `html` value as `sendRichMessage.rich_message.html` and render `choice_buttons` below it. If rich messages are unavailable, send `choice_display` by itself and do not append `choices_table`, `results`, or `label` values. The MCP wrapper returns an agent-facing `agent_clarify` object instead: Hermes-style flows should put `agent_clarify.display_table` in a fenced text/code block, append `agent_clarify.display_notice` after the block when present, pass `agent_clarify.choices` as short numeric button labels, and map the selected number through `agent_clarify.response_mapping`. The zero-config release default is stock Hermes-friendly: `QBITLARR_MANUAL_RESULT_LIMIT=4` and `QBITLARR_CHOICE_STYLE=hermes-default`, matching Hermes-style clarify surfaces that show four rows without leaking duplicate numbered lists. If your local Telegram/Hermes adapter can render a rich table plus a closed row of five buttons, set:
 
 ```sh
 QBITLARR_MANUAL_RESULT_LIMIT=5
@@ -258,6 +258,12 @@ Notes:
 - Cleanup calls qBittorrent with `delete_files=false`, so it deletes only the qBittorrent task, not media files.
 - Unmanaged torrents without `qbitlarr.managed` or legacy `requester.*` tags are ignored.
 
+Query snapshots used by manual result picking are pruned independently of qBittorrent task cleanup. The maintenance loop runs snapshot pruning even when `QBITLARR_CLEANUP_ENABLED=false`; tune the default 7-day retention with:
+
+```sh
+QBITLARR_QUERY_SNAPSHOT_RETENTION_SECONDS=604800
+```
+
 ## Connect To An Agent
 
 qBitlarr ships as an **MCP server**, so any agent that speaks the [Model Context Protocol](https://modelcontextprotocol.io) — Claude Desktop, Cursor, Cline, Hermes, OpenClaw, ChatGPT via an MCP bridge, your own custom agent — can use it.
@@ -277,6 +283,7 @@ The stdio MCP wrapper also sends **one-time completion notifications** to Hermes
 - The same per-user `user_id` / `requester_id` scopes status checks to that user's tagged torrents.
 - For manual flows, call `qbitlarr_watch_download` with a known hash; pass `completion_followup_message` to append a "what starts next" line (e.g. subtitle processing).
 - Telegram progress editing reads `QBITLARR_TELEGRAM_BOT_TOKEN`, then `QBITLARR_HERMES_ENV_PATH`, `HERMES_HOME/.env`, `~/.hermes/.env` — point `QBITLARR_HERMES_ENV_PATH` at a profile `.env` when running multiple bots.
+- Watch state uses `QBITLARR_NOTIFICATION_WATCHES_PATH` when set; otherwise it defaults to `$XDG_DATA_HOME/qbitlarr/download-notification-watches.json`, or `~/.local/share/qbitlarr/download-notification-watches.json` when `XDG_DATA_HOME` is unset.
 - `QBITLARR_COMPLETION_HOOK_COMMAND` runs a local command after a watched download completes or is removed; qBitlarr sends the user message first, then writes a `download_complete` / `download_removed` JSON event to the command's stdin. Hook failures are retried without hiding the user notice.
 
 If `QBITLARR_API_KEY` is set, both transports require an `X-API-Key` header. The stdio MCP picks it up from the same env var.
@@ -322,7 +329,7 @@ The pattern is the same — they all support one or both transports:
 - **Stdio path**: configure the host to launch `bin/qbitlarr-mcp` as a subprocess (with env vars for the API URL and optional API key).
 - **HTTP path**: point the host at `http://localhost:8000/mcp` with the `X-API-Key` header if you set one.
 
-For `choose_title` and `show_results`, MCP hosts should ask a picker question with `agent_clarify.display_table` inside a monospace block, pass `agent_clarify.choices` as short numeric button labels, and map the selected number through `agent_clarify.response_mapping`. Direct REST Telegram adapters that support Bot API `sendRichMessage` should render `choice_rich_message` first and place `choice_buttons` below it. If that is not available, send `choice_display` alone. Plain REST hosts using the default `hermes-default` response can render `choices_table` inside a monospace block.
+For `choose_title` and `show_results`, MCP hosts should ask a picker question with `agent_clarify.display_table` inside a monospace block, append `agent_clarify.display_notice` after the block when present, pass `agent_clarify.choices` as short numeric button labels, and map the selected number through `agent_clarify.response_mapping`. Direct REST Telegram adapters that support Bot API `sendRichMessage` should render `choice_rich_message` first and place `choice_buttons` below it. If that is not available, send `choice_display` alone. Plain REST hosts using the default `hermes-default` response can render `choices_table` inside a monospace block.
 
 ### Tell your agent when to use qBitlarr
 
