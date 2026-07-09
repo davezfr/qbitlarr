@@ -1,5 +1,11 @@
 # qBitlarr
 
+> [!IMPORTANT]
+> qBitlarr est archivé. Le développement continue dans
+> [MPilot](https://github.com/davezfr/mpilot), qui inclut le toolset
+> d'acquisition MPilot ainsi que l'automatisation autonome des sous-titres et
+> des workflows. Utilisez MPilot pour les nouvelles intégrations.
+
 **Langue :** [English](README.md) | [中文](README.zh-CN.md) | Français
 
 **Une passerelle légère entre Prowlarr et qBittorrent, avec support REST, MCP et CLI.**

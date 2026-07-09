@@ -1,5 +1,11 @@
 # qBitlarr
 
+> [!IMPORTANT]
+> qBitlarr 已归档。新的开发已经迁移到
+> [MPilot](https://github.com/davezfr/mpilot)。MPilot 包含新的 acquisition
+> 工具集，也包含可单独使用的字幕与 workflow 自动化能力。新集成请使用
+> MPilot。
+
 **语言:** [English](README.md) | 中文 | [Français](README.fr.md)
 
 **一个连接 Prowlarr 和 qBittorrent 的轻量桥接服务，支持 REST、MCP 和 CLI。**
